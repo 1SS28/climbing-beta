@@ -168,7 +168,33 @@ def search(holds, start, finish, c=Climber(), w=Costs(), max_expansions=200_000)
                     prev[nxt] = s
                     heapq.heappush(queue, (nd, nxt))
 
-    return None, "no sequence reaches the finish hold"
+    return None, "no sequence reaches the finish hold. " + reach_gap(holds, start, finish, c)
+
+
+def reach_gap(holds, start, finish, c):
+    """Explain a failure: how far apart the route actually is.
+
+    "No sequence" is useless on its own — it cannot distinguish a route that is
+    merely hard from a colour grouping that has swept up unrelated holds, which
+    is the far more common cause.
+    """
+    pos = [h.pos for h in holds]
+    reached, frontier = set(start), list(start)
+    while frontier:  # holds chainable from the start within one limb move
+        i = frontier.pop()
+        for j in range(len(holds)):
+            if j not in reached and np.linalg.norm(pos[j] - pos[i]) <= c.step_max:
+                reached.add(j)
+                frontier.append(j)
+
+    if finish in reached:
+        return "holds are chainable, so the body constraints are what block it."
+    outside = [j for j in range(len(holds)) if j not in reached]
+    gap = min(np.linalg.norm(pos[j] - pos[i]) for i in reached for j in outside)
+    return (
+        f"the route splits: {len(reached)}/{len(holds)} holds chainable from the start, "
+        f"and the nearest gap across is {gap:.2f} m against a {c.step_max:.2f} m limit."
+    )
 
 
 def describe(path, holds, c=Climber(), w=Costs()):

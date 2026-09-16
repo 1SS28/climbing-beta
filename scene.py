@@ -33,16 +33,33 @@ def polygon_area(poly):
     return 0.5 * abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
 
 
-def from_polygons(polys, image_height_px, wall_height_m=4.5):
+def scale_from_reference(p1, p2, metres):
+    """Metres per pixel from two image points a known distance apart.
+
+    A single photo cannot recover scale on its own — the T-nut lattice was the
+    automatic route and it does not survive real images (see README) — so the
+    reference comes from the user. Two points rather than a wall height because
+    it costs the same and accepts whatever is actually visible: the wall's
+    full height, a standard panel edge, a person of known height.
+
+    Only valid for things lying in the wall plane; a reference held out from the
+    wall measures short.
+    """
+    span = float(np.hypot(p2[0] - p1[0], p2[1] - p1[1]))
+    if span < 1.0:
+        raise ValueError("reference points are the same pixel")
+    return metres / span
+
+
+def from_polygons(polys, image_height_px, metres_per_pixel):
     """Detected mask polygons -> holds in metres.
 
-    The scale here is the weakest link in the whole pipeline: it assumes the
-    photo spans a wall of known height and that the wall is flat and parallel to
-    the sensor. Perspective alone breaks that — holds at the top of a 4.5 m wall
-    are further away and read smaller. This is exactly the assumption ARKit
-    would replace, and the reason the search must not depend on how it was made.
+    Still assumes the wall is flat and square to the sensor, so one scale holds
+    everywhere in frame. Perspective breaks that — holds high on the wall are
+    further away and read smaller — which is what ARKit depth would fix, and
+    why the search consumes this and never the photo.
     """
-    mpp = wall_height_m / image_height_px  # metres per pixel
+    mpp = metres_per_pixel
     holds = []
     for poly in polys:
         p = np.asarray(poly, dtype=float)

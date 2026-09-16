@@ -15,11 +15,15 @@ from PIL import Image, ImageDraw
 from beta import Climber, describe, find_start, search
 from colour import group as colour_group
 from colour import hold_colour
-from scene import from_polygons
+from scene import from_polygons, scale_from_reference
 
 src = sys.argv[1]
 want = int(sys.argv[2]) if len(sys.argv) > 2 else -1
-wall_h = float(sys.argv[3]) if len(sys.argv) > 3 else 4.5
+# Scale reference, as "y_top,y_bottom,metres": two image rows a known distance
+# apart, usually the top of the wall and the ground line. Scale cannot be
+# recovered from one photo, so it is an input, not a guess.
+ref = sys.argv[3] if len(sys.argv) > 3 else None
+climber_h = float(sys.argv[4]) if len(sys.argv) > 4 else 1.75
 
 from ultralytics import YOLO  # noqa: E402
 
@@ -45,7 +49,15 @@ pick = int(np.argmax(sizes)) if want < 0 else want
 route = [i for i, l in enumerate(labels) if l == pick]
 print(f"{len(polys)} holds, {len(sizes)} groups; climbing group {pick} ({len(route)} holds)")
 
-holds = from_polygons([polys[i] for i in route], img.height, wall_h)
+if ref:
+    y_top, y_bot, metres = (float(v) for v in ref.split(","))
+    mpp = scale_from_reference((0, y_top), (0, y_bot), metres)
+    print(f"scale: {metres} m over {abs(y_bot - y_top):.0f} px -> {mpp * 1000:.2f} mm/px")
+else:
+    mpp = 4.5 / img.height
+    print(f"scale: ASSUMED 4.5 m over the full frame -> {mpp * 1000:.2f} mm/px (pass a reference)")
+
+holds = from_polygons([polys[i] for i in route], img.height, mpp)
 finish = int(np.argmax([h.y for h in holds]))
 
 start = find_start(holds)
@@ -53,7 +65,7 @@ if start is None:
     print("no feasible start stance — holds too far apart for this climber")
     sys.exit(1)
 
-path, info = search(holds, start, finish, c=Climber(height=1.75))
+path, info = search(holds, start, finish, c=Climber(height=climber_h))
 if path is None:
     print(f"no beta found: {info}")
     sys.exit(1)
