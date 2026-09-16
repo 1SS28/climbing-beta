@@ -12,8 +12,8 @@ from PIL import Image
 def load(path):
     """Read one annotation. Returns (RGB image, list of (N,2) polygons).
 
-    imageData is null throughout ClimbInst, so the image normally comes from
-    ../images/<imagePath>; the base64 branch is just in case a file has it.
+    imageData is null throughout ClimbInst, so the image comes from
+    ../images/<imagePath>. The base64 branch covers files that do carry it.
     """
     path = Path(path)
     d = json.loads(path.read_text())

@@ -2,10 +2,9 @@
 
     uv run python find_routes.py [n_images]
 
-Most ClimbInst walls are training boards or competition walls where every hold
-is in play, so no colour group forms a line and the beta search has nothing to
-find. This looks for the exception: images where one saturated colour group
-rises up the wall and chains together. Those are the true-positive test cases.
+Most ClimbInst walls are boards or competition walls where every hold is in
+play, so no colour group forms a line. This finds the exceptions, which are the
+usable test cases.
 """
 
 import sys
@@ -55,7 +54,7 @@ for n, f in enumerate(files):
         g, s = best_group(by_group, centroids, img.height)
         if g is not None:
             rows.append((s, f.name, g, int((labels == g).sum()), len(pts)))
-    except Exception as exc:  # a scan should not die on one bad image
+    except Exception as exc:
         print(f"  skip {f.name}: {exc}")
     if (n + 1) % 25 == 0:
         print(f"  ...{n + 1}/{len(files)}")

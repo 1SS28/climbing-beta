@@ -1,18 +1,13 @@
-"""Recover scale from the T-nut grid.
+"""Recover scale from the T-nut grid. Does not work; see README.
 
-Gym walls are drilled on a regular lattice, so if the bolt holes can be found
-the spacing between them is a ruler lying in the image. That would replace the
-hardcoded wall height that every metric constraint currently hangs off — the
-single weakest assumption in the pipeline.
-
-Whether this survives real photos is the open question; see the notes in
-README. Written with numpy only, in keeping with the rest of the project.
+Gym walls are drilled on a regular lattice, so the bolt holes should be a ruler
+lying in the image. Neither method here finds that lattice in real photos, at
+these resolutions. Kept because the idea is an obvious one to re-try.
 """
 
 import numpy as np
 
-# Common commercial T-nut spacings, metres. Walls vary by manufacturer, so the
-# best this can do is match an observed spacing to a plausible standard.
+# Common commercial T-nut spacings, metres. Walls vary by manufacturer.
 STANDARD_SPACINGS = (0.100, 0.125, 0.150, 0.200, 0.203)  # 203 mm = 8 inches
 
 
@@ -31,8 +26,8 @@ def box_mean(a, k):
 def local_minima(a, radius):
     """True where a pixel is the darkest in its square neighbourhood.
 
-    A min-filter by repeated shifted minimum — cheaper to write than connected
-    components, and a bolt hole yields one minimum, which is all that's wanted.
+    Min-filter by repeated shifted minimum: cheaper than connected components,
+    and one minimum per bolt hole is all that is needed.
     """
     out = a.copy()
     for dy in range(-radius, radius + 1):
@@ -52,10 +47,9 @@ def candidates(gray, radius=3, context=14, depth=8.0):
 def dominant_spacing(points, lo=8.0, hi=120.0, bins=112):
     """The most common short distance between candidates, in pixels.
 
-    Uses every pair within range rather than nearest neighbours only: on a
-    lattice, pairs pile up at the spacing and its multiples, and missing holes
-    (hidden behind holds) leave that peak standing where a nearest-neighbour
-    statistic would smear it.
+    Every pair within range, not nearest neighbours only: on a lattice, pairs
+    pile up at the spacing and its multiples, and holes hidden behind holds
+    leave that peak standing.
     """
     if len(points) < 8:
         return None, 0.0
@@ -67,8 +61,7 @@ def dominant_spacing(points, lo=8.0, hi=120.0, bins=112):
     hist, edges = np.histogram(d, bins=bins, range=(lo, hi))
     peak = int(np.argmax(hist))
     spacing = 0.5 * (edges[peak] + edges[peak + 1])
-    # How much the peak stands above the typical bin — a flat histogram means
-    # there is no lattice here, only scattered specks.
+    # How far the peak stands above a typical bin. Flat means no lattice.
     strength = hist[peak] / max(np.median(hist), 1e-6)
     return spacing, float(strength)
 

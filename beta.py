@@ -1,11 +1,7 @@
-"""V3: find a plausible sequence of moves through a route.
+"""Find a sequence of moves through a route.
 
-A stance is which hold each of the four limbs is on. A move changes exactly one
-limb. That makes the problem a shortest path over stances, so it is Dijkstra
-with a heuristic — no training data, and every move can be explained by the cost
-that chose it, which matters more than the move being the one a strong climber
-would pick. There is no ground truth for beta; an interpretable answer is worth
-more than a confident one.
+A stance is which hold each limb is on; a move changes one limb. Finding a
+sequence is therefore a shortest path over stances.
 """
 
 import heapq
@@ -18,9 +14,7 @@ LIMBS = ("LH", "RH", "LF", "RF")
 
 @dataclass(frozen=True)
 class Climber:
-    """Reach limits, in metres, derived from height. Beta is personal — a 155 cm
-    climber and a 190 cm climber genuinely do different moves — so this is the
-    one knob that has to exist from the start."""
+    """Reach limits in metres, derived from height."""
 
     height: float = 1.68  # 5'6"
     ape: float = 1.0  # arm span / height
@@ -31,11 +25,8 @@ class Climber:
 
     @property
     def body(self):
-        # Foot to fingertip, fully extended: standing on a foothold and reaching
-        # overhead spans more than the climber is tall. 0.9x height was the
-        # first guess and it deadlocked every real route — the hands could not
-        # rise until the feet did, and the feet could not rise until the hands
-        # had, so nothing moved.
+        # Foot to fingertip, fully extended. Values below ~1.2x height deadlock
+        # real routes: hands cannot rise until feet do, and vice versa.
         return 1.25 * self.height
 
     @property
@@ -49,8 +40,7 @@ class Climber:
 
 @dataclass
 class Costs:
-    """Weights on the four terms. Exposed because tuning these *is* the model —
-    there is nothing learned here to hide behind."""
+    """Weights on the four cost terms."""
 
     travel: float = 1.0
     strain: float = 2.0
@@ -59,17 +49,13 @@ class Costs:
 
 
 def feasible(stance, holds, c):
-    """Pairwise limits only — no invented torso.
+    """Pairwise limits between the four contact points.
 
-    A jointed body model would need shoulder, hip and torso parameters that
-    cannot be recovered from a photo, and each invented number would be one more
-    thing quietly deciding the beta. Distances between the four contact points
-    are the most that can honestly be constrained.
+    No jointed body model: shoulder, hip and torso parameters cannot be
+    recovered from a photo, so only contact-point distances are constrained.
     """
-    # At most two limbs share a hold — matching hands, or a hand and a foot.
-    # Without this the search finds a degenerate "solution" that stacks all four
-    # limbs on one hold and shuffles up the wall, since coincident contact points
-    # drive both strain and balance to zero.
+    # Cap of two limbs per hold. Without it the search stacks all four limbs on
+    # one hold, which drives strain and balance to zero.
     counts = {}
     for i in stance:
         counts[i] = counts.get(i, 0) + 1
@@ -83,8 +69,7 @@ def feasible(stance, holds, c):
     if np.linalg.norm(feet[0] - feet[1]) > 0.8 * c.span:
         return False
 
-    # The torso has a length: hands are well above feet, and not further than
-    # the body can stretch. This is what stops the collapse above.
+    # Torso length bounds, which also prevent the collapse above.
     torso = min(h[1] for h in hands) - max(f[1] for f in feet)
     if not c.torso_min <= torso <= 0.95 * c.height:
         return False
@@ -97,13 +82,11 @@ def stance_cost(stance, holds, c, w):
     p = np.array([holds[i].pos for i in stance])
     hands, feet = p[:2], p[2:]
 
-    # How extended the body is, as a fraction of its limits. Squared so that
-    # being near the limit hurts sharply rather than linearly.
+    # Extension as a fraction of limits, squared so the limit hurts sharply.
     strain = (np.linalg.norm(hands[0] - hands[1]) / c.span) ** 2
     strain += max(np.linalg.norm(h - f) / c.body for h in hands for f in feet) ** 2
 
-    # Balance: how far the centre of mass sits outside the feet. On a slab this
-    # is what actually decides whether a move works.
+    # How far the centre of mass sits outside the feet.
     com = p.mean(axis=0)
     balance = abs(com[0] - feet[:, 0].mean())
 
@@ -112,12 +95,9 @@ def stance_cost(stance, holds, c, w):
 
 
 def eligible(holds, hands=None, feet=None):
-    """Which holds each limb may use.
+    """Which holds each limb may use. Hands take the route, feet take the wall.
 
-    Hands are the route; feet are usually anything on the wall. Gyms differ —
-    some set "colour holds only" for all four limbs — but restricting feet to a
-    sparse route makes most routes unclimbable on paper, which is a property of
-    the assumption rather than of the climb.
+    Restricting all four limbs to a sparse route makes most routes unclimbable.
     """
     everything = list(range(len(holds)))
     return (list(hands) if hands is not None else everything,
@@ -125,9 +105,8 @@ def eligible(holds, hands=None, feet=None):
 
 
 def find_start(holds, c=Climber(), hands=None, feet=None):
-    """Lowest stance the body actually fits into. Gyms mark the start holds and
-    we cannot detect that marking, so the convention here is simply: start as
-    low as possible. Left/right are assigned by x so the limbs are not crossed."""
+    """Lowest stance the body fits into. Start markings are not detectable, so
+    the convention is to start as low as possible."""
     hand_ok, foot_ok = eligible(holds, hands, feet)
     by_height = lambda s: sorted(s, key=lambda i: holds[i].y)  # noqa: E731
     hs, fs = by_height(hand_ok), by_height(foot_ok)
@@ -151,7 +130,7 @@ def search(holds, start, finish, c=Climber(), w=Costs(), hands=None, feet=None,
     hand_ok, foot_ok = eligible(holds, hands, feet)
     allowed = (hand_ok, hand_ok, foot_ok, foot_ok)  # LH, RH, LF, RF
 
-    reach = c.step_max  # one move repositions one limb; it is not a teleport
+    reach = c.step_max
     dist = {start: 0.0}
     prev = {}
     queue = [(0.0, start)]
@@ -180,7 +159,7 @@ def search(holds, start, finish, c=Climber(), w=Costs(), hands=None, feet=None,
                 if j == s[limb]:
                     continue
                 step = float(np.linalg.norm(holds[j].pos - here))
-                if step > reach:  # prune early; most holds are out of range
+                if step > reach:
                     continue
                 nxt = tuple(j if k == limb else s[k] for k in range(4))
                 if not feasible(nxt, holds, c):
@@ -195,15 +174,14 @@ def search(holds, start, finish, c=Climber(), w=Costs(), hands=None, feet=None,
 
 
 def reach_gap(holds, start, finish, c):
-    """Explain a failure: how far apart the route actually is.
+    """Explain a failure: whether the route splits, and by how much.
 
-    "No sequence" is useless on its own — it cannot distinguish a route that is
-    merely hard from a colour grouping that has swept up unrelated holds, which
-    is the far more common cause.
+    Distinguishes a hard route from a colour grouping that swept up unrelated
+    holds, which is the more common cause.
     """
     pos = [h.pos for h in holds]
     reached, frontier = set(start), list(start)
-    while frontier:  # holds chainable from the start within one limb move
+    while frontier:
         i = frontier.pop()
         for j in range(len(holds)):
             if j not in reached and np.linalg.norm(pos[j] - pos[i]) <= c.step_max:

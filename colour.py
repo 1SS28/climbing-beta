@@ -1,8 +1,4 @@
-"""V2: what colour is each hold, and which holds share a colour.
-
-Written out by hand rather than pulled from a colour library — the conversion is
-short, and the project is partly an excuse to know how it works.
-"""
+"""Hold colour, and which holds share one."""
 
 import numpy as np
 
@@ -14,9 +10,7 @@ _WHITE = np.array([0.95047, 1.0, 1.08883])
 def srgb_to_lab(rgb):
     """(N,3) uint8 sRGB -> (N,3) CIELAB.
 
-    CIELAB because Euclidean distance in it tracks perceived colour difference,
-    which plain RGB does not: two RGB triples the same distance apart can look
-    identical or obviously different.
+    Euclidean distance in CIELAB tracks perceived difference; in RGB it does not.
     """
     c = np.asarray(rgb, dtype=np.float64) / 255.0
     c = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)  # undo gamma
@@ -26,30 +20,24 @@ def srgb_to_lab(rgb):
 
 
 def hold_colour(pixels):
-    """One robust colour for a hold, from the pixels inside its mask.
+    """One colour for a hold, from the pixels inside its mask.
 
-    The median, not the mean: a mask leaks a little wall at its edges and picks
-    up chalk and specular highlights in its middle, and a mean drags toward
-    those while a median ignores them.
+    Median rather than mean: masks leak wall at the edges and chalk in the
+    middle, and a mean drags toward both.
     """
     return np.median(srgb_to_lab(pixels), axis=0)
 
 
 def group(labs, threshold=18.0):
-    """Cluster holds by colour, complete linkage. Returns a label per hold.
+    """Cluster holds by colour. Returns a label per hold.
 
-    Distance is taken on a* and b* only, dropping L*: the same hold reads much
-    darker in shadow or under a light, but its hue barely moves.
+    Distance uses a* and b* only. Dropping L* means shadow does not split a
+    route, since a shaded hold keeps its hue.
 
-    Complete linkage, after single linkage failed outright. Hold colours form a
-    continuum — orange runs into yellow runs into pink — so joining clusters
-    whose *nearest* members are close chains straight through those gaps: on a
-    76-hold wall with obviously distinct routes it merged 43 of them even at a
-    threshold of 5. Requiring every pair in a merged cluster to be within the
-    threshold gives the gap no foothold.
-
-    The number of routes on a wall is unknown, which is why this is threshold-
-    based rather than k-means.
+    Complete linkage, because single linkage chains through the continuum from
+    orange to yellow to pink: it merged 43 of 76 distinct holds at a threshold
+    of 5. Threshold-based rather than k-means, since the number of routes on a
+    wall is unknown.
     """
     labs = np.asarray(labs)
     if len(labs) == 0:
@@ -63,7 +51,7 @@ def group(labs, threshold=18.0):
         best = None
         for i in range(len(clusters)):
             for j in range(i + 1, len(clusters)):
-                worst = dist[np.ix_(clusters[i], clusters[j])].max()  # complete linkage
+                worst = dist[np.ix_(clusters[i], clusters[j])].max()
                 if worst <= threshold and (best is None or worst < best[0]):
                     best = (worst, i, j)
         if best is None:

@@ -2,8 +2,8 @@
 
     uv run python train.py --model yolo11n-seg.pt --epochs 15 --imgsz 640 --name smoke
 
-Ultralytics is AGPL-3.0 and ClimbInst is CC BY-NC-SA 4.0 — both bind only on
-commercial release, which would mean retraining on our own data anyway.
+See THIRD_PARTY.md for the Ultralytics and ClimbInst terms, which bind only on
+distribution.
 """
 
 import argparse
@@ -29,8 +29,7 @@ results = YOLO(a.model).train(
     name=a.name,
     exist_ok=True,
     patience=15,
-    # A wall shot from the other side is still a wall, but it is never upside
-    # down — and hold colour carries route membership, so leave hue nearly alone.
+    # Mirroring is fine, flipping is not, and hue carries route membership.
     fliplr=0.5,
     flipud=0.0,
     degrees=5,

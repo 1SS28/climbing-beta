@@ -1,7 +1,7 @@
 """Convert ClimbInst Labelme polygons into the layout YOLO segmentation expects.
 
-ClimbInst ships train/ and test/ only — the val/ split advertised on the dataset
-card is empty on the Hub — so validation is carved out of train here.
+ClimbInst ships train/ and test/ only. The val/ split advertised on the dataset
+card is empty on the Hub, so validation is carved out of train here.
 
     uv run python prepare.py
 """
@@ -16,8 +16,8 @@ VAL_PERCENT = 10
 
 
 def split_of(name):
-    """Stable holdout. Hashing the filename rather than using a position means
-    the split doesn't shift when files are added, removed or reordered."""
+    """Stable holdout. Hashing the filename keeps the split fixed when files
+    are added, removed or reordered."""
     return "val" if int(hashlib.sha1(name.encode()).hexdigest(), 16) % 100 < VAL_PERCENT else "train"
 
 
@@ -39,7 +39,7 @@ def main():
             ann = json.loads(ann_path.read_text())
 
             img_src = SRC / src_split / "images" / ann["imagePath"]
-            if not img_src.exists():  # imagePath occasionally disagrees on extension
+            if not img_src.exists():  # imagePath sometimes disagrees on extension
                 matches = list((SRC / src_split / "images").glob(ann_path.stem + ".*"))
                 if not matches:
                     print(f"skip {ann_path.name}: no image")
@@ -53,7 +53,7 @@ def main():
             (DST / "labels" / split).mkdir(parents=True, exist_ok=True)
 
             link = DST / "images" / split / img_src.name
-            if not link.exists():  # symlink: the images are 4 GB, don't copy them
+            if not link.exists():  # symlink rather than copy; the images are 4 GB
                 link.symlink_to(img_src.resolve())
             (DST / "labels" / split / f"{img_src.stem}.txt").write_text("\n".join(lines) + "\n")
 

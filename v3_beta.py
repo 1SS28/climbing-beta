@@ -1,9 +1,9 @@
 """V3 end to end: photo -> holds -> route -> beta.
 
-    uv run python v3_beta.py <image> [group] [wall_height_m]
+    .venv/bin/python v3_beta.py <image> [group] [y_top,y_bot,metres] [height_m]
 
-`group` picks which colour cluster to climb; default is the largest. Pass a
-wall height in metres if you know it — the whole metric scale hangs off it.
+`group` of -1 picks the most route-like cluster. The scale reference matters:
+the metric model depends on it.
 """
 
 import sys
@@ -24,7 +24,7 @@ want = int(sys.argv[2]) if len(sys.argv) > 2 else -1
 # apart, usually the top of the wall and the ground line. Scale cannot be
 # recovered from one photo, so it is an input, not a guess.
 ref = sys.argv[3] if len(sys.argv) > 3 else None
-climber_h = float(sys.argv[4]) if len(sys.argv) > 4 else 1.75
+climber_h = float(sys.argv[4]) if len(sys.argv) > 4 else 1.68
 
 from ultralytics import YOLO  # noqa: E402
 
@@ -50,14 +50,14 @@ sizes = np.bincount(labels)
 if want >= 0:
     pick = want
 else:
-    # Not the largest group — that is usually the neutral greys, which are wall
-    # furniture rather than a line. Pick the most route-like one instead.
+    # Not the largest group, which is usually the neutral greys shared by
+    # every route. Pick the most route-like one instead.
     centres = np.array([np.asarray(p).mean(axis=0) for p in polys])
     by_group = {g: centres[labels == g] for g in range(len(sizes))}
     centroids = {g: np.array(colours)[labels == g].mean(axis=0) for g in by_group}
     pick, sc = best_group(by_group, centroids, img.height)
     if pick is None:
-        print("no group looks like a route — nothing rises, chains and is saturated")
+        print("no group looks like a route: nothing rises, chains and is saturated")
         sys.exit(1)
     print(f"route-likeness {sc:.3f}")
 
@@ -72,15 +72,14 @@ else:
     mpp = 4.5 / img.height
     print(f"scale: ASSUMED 4.5 m over the full frame -> {mpp * 1000:.2f} mm/px (pass a reference)")
 
-# Every detected hold goes into the scene: hands are limited to the route,
-# but feet may use anything on the wall, as they can in most gyms.
+# Hands are limited to the route, feet may use any hold, as in most gyms.
 holds = from_polygons(polys, img.height, mpp)
 finish = max(route, key=lambda i: holds[i].y)
 climber = Climber(height=climber_h)
 
 start = find_start(holds, climber, hands=route)
 if start is None:
-    print("no feasible start stance — holds too far apart for this climber")
+    print("no feasible start stance: holds too far apart for this climber")
     sys.exit(1)
 
 path, info = search(holds, start, finish, c=climber, hands=route)
@@ -92,10 +91,10 @@ print(f"start {start} -> finish hold {finish}: {len(path) - 1} moves, cost {info
 for line in describe(path, holds):
     print("  ", line)
 
-# Draw the route holds with their index, and the moving limb's track per move.
+# Ring the route holds, then draw each move as the moving limb's track.
 draw = ImageDraw.Draw(img, "RGBA")
 centres = [np.array(p).mean(axis=0) for p in polys]
-for i in route:  # ring the route holds; feet may use others, so leave them plain
+for i in route:
     c = centres[i]
     draw.ellipse([c[0] - 18, c[1] - 18, c[0] + 18, c[1] + 18], outline=(255, 255, 255, 255), width=4)
 for a, b in zip(path, path[1:]):
