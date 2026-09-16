@@ -1,0 +1,16 @@
+[project]
+name = "climbing-beta"
+version = "0.1.0"
+description = "Detect climbing holds in gym wall photos and search for a plausible beta."
+requires-python = ">=3.12"
+dependencies = [
+    "torch>=2.6",
+    "torchvision>=0.21",
+    "numpy>=2.0",
+    "pillow>=11.0",
+    "matplotlib>=3.9",
+    "huggingface-hub>=0.28",
+]
+
+[tool.uv]
+package = false
