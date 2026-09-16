@@ -76,6 +76,17 @@ Fine-tune an instance segmentation model. Report mask mAP on held-out images,
 then run it on photos from a gym the dataset has never seen — the second half
 is the one that decides whether the project is viable.
 
+**Done.** YOLO11s-seg, 960px, 60 epochs, ~3.8 h on an M5 Pro. On 106 held-out
+images (6,356 holds): mask mAP50 **0.877**, mAP50-95 **0.548**; box mAP50 0.919.
+
+Training here is I/O-bound, not compute-bound — Ultralytics forces 0 dataloader
+workers on MPS, so YOLO11s at 768px ran 2.6 min/epoch against nano at 640's
+2.5 despite roughly 5x the compute. Resolution is nearly free; spend it.
+
+Known failure mode: objects that are not on the wall — brushes on the mat, a
+brush hanging from the ceiling, a wall sign — are detected as holds. A
+wall-plane or ground-line filter should clear most of them.
+
 YOLO11-seg, for a fast MPS fine-tune and a clean CoreML export later.
 Ultralytics is AGPL-3.0 and ClimbInst is CC BY-NC-SA 4.0, and both constraints
 bind on the same day: shipping commercially means retraining on our own data
