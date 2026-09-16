@@ -72,7 +72,15 @@ Load the dataset and render annotated holds over their images. Verifies the
 data before any model exists.
 
 ### V1
-Fine-tune an instance segmentation model. Report mask mAP on held-out images.
+Fine-tune an instance segmentation model. Report mask mAP on held-out images,
+then run it on photos from a gym the dataset has never seen — the second half
+is the one that decides whether the project is viable.
+
+YOLO11-seg, for a fast MPS fine-tune and a clean CoreML export later.
+Ultralytics is AGPL-3.0 and ClimbInst is CC BY-NC-SA 4.0, and both constraints
+bind on the same day: shipping commercially means retraining on our own data
+anyway, and that is the moment to swap in a permissively licensed model. Not a
+reason to pay for the complexity now.
 
 ### V2
 Group holds into routes by colour.

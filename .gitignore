@@ -4,3 +4,5 @@ data/
 runs/
 out/
 .DS_Store
+runs_v1.log
+*.pt
