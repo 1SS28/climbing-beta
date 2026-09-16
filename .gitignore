@@ -6,3 +6,4 @@ out/
 .DS_Store
 runs_v1.log
 *.pt
+runs_full.log
