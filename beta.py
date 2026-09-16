@@ -69,8 +69,11 @@ def feasible(stance, holds, c):
     if np.linalg.norm(feet[0] - feet[1]) > 0.8 * c.span:
         return False
 
-    # Torso length bounds, which also prevent the collapse above.
-    torso = min(h[1] for h in hands) - max(f[1] for f in feet)
+    # Torso runs shoulders to hips, so compare the hand and foot midpoints
+    # rather than their extremes. Requiring every hand above every foot forbids
+    # high steps, heel hooks and underclings, which are ordinary climbing, and
+    # it blocked 7 of 10 real routes.
+    torso = np.mean([h[1] for h in hands]) - np.mean([f[1] for f in feet])
     if not c.torso_min <= torso <= 0.95 * c.height:
         return False
 
@@ -92,6 +95,55 @@ def stance_cost(stance, holds, c, w):
 
     quality = sum(0.05 / max(holds[i].size, 0.01) for i in stance) / 4
     return w.strain * strain + w.balance * balance + w.quality * quality
+
+
+def route_chain(holds, route, c=Climber()):
+    """The holds forming a path from the lowest hold of a route to the highest.
+
+    A route is a line from the ground to the top, so the top hold is the goal,
+    not a candidate for removal. Breadth-first from the lowest hold over steps
+    the climber can make: holds off the path (strays the colour grouping swept
+    in from elsewhere) are simply never visited.
+
+    Returns (chain, reason). chain is None when nothing connects the bottom to
+    the top, which is the honest answer. Taking the largest connected component
+    instead discards the top hold whenever the gap is near it, then reports a
+    beta for a truncated route.
+    """
+    if len(route) < 2:
+        return (list(route), "") if route else (None, "route is empty")
+
+    lo = min(route, key=lambda i: holds[i].y)
+    hi = max(route, key=lambda i: holds[i].y)
+
+    prev, frontier = {lo: None}, [lo]
+    while frontier:
+        nxt = []
+        for i in frontier:
+            for j in route:
+                if j not in prev and np.linalg.norm(holds[j].pos - holds[i].pos) <= c.step_max:
+                    prev[j] = i
+                    nxt.append(j)
+        frontier = nxt
+
+    if hi not in prev:
+        reached = list(prev)
+        gap = min(
+            np.linalg.norm(holds[j].pos - holds[i].pos)
+            for i in reached
+            for j in route
+            if j not in prev
+        )
+        return None, (
+            f"no path from the lowest hold to the highest: {len(reached)}/{len(route)} "
+            f"reachable, nearest gap {gap:.2f} m against a {c.step_max:.2f} m limit"
+        )
+
+    chain, node = [], hi
+    while node is not None:
+        chain.append(node)
+        node = prev[node]
+    return chain[::-1], ""
 
 
 def eligible(holds, hands=None, feet=None):
@@ -170,30 +222,35 @@ def search(holds, start, finish, c=Climber(), w=Costs(), hands=None, feet=None,
                     prev[nxt] = s
                     heapq.heappush(queue, (nd, nxt))
 
-    return None, "no sequence reaches the finish hold. " + reach_gap(holds, start, finish, c)
+    return None, "no sequence reaches the finish hold. " + reach_gap(holds, start, finish, c, hand_ok)
 
 
-def reach_gap(holds, start, finish, c):
+def reach_gap(holds, start, finish, c, hand_ok=None):
     """Explain a failure: whether the route splits, and by how much.
 
-    Distinguishes a hard route from a colour grouping that swept up unrelated
-    holds, which is the more common cause.
+    Chains over hand-eligible holds only. Chaining over every hold answers a
+    different question and reports a connected route when the one the hands may
+    actually use is severed.
     """
+    pool = list(hand_ok) if hand_ok is not None else list(range(len(holds)))
     pos = [h.pos for h in holds]
-    reached, frontier = set(start), list(start)
+    reached = {i for i in start if i in pool} or {start[0]}
+    frontier = list(reached)
     while frontier:
         i = frontier.pop()
-        for j in range(len(holds)):
+        for j in pool:
             if j not in reached and np.linalg.norm(pos[j] - pos[i]) <= c.step_max:
                 reached.add(j)
                 frontier.append(j)
 
     if finish in reached:
-        return "holds are chainable, so the body constraints are what block it."
-    outside = [j for j in range(len(holds)) if j not in reached]
+        return "route holds are chainable, so the body constraints are what block it."
+    outside = [j for j in pool if j not in reached]
+    if not outside:
+        return "every route hold is chainable; the finish hold is not among them."
     gap = min(np.linalg.norm(pos[j] - pos[i]) for i in reached for j in outside)
     return (
-        f"the route splits: {len(reached)}/{len(holds)} holds chainable from the start, "
+        f"the route splits: {len(reached)}/{len(pool)} route holds chainable from the start, "
         f"and the nearest gap across is {gap:.2f} m against a {c.step_max:.2f} m limit."
     )
 

@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from beta import Climber, describe, find_start, search
+from beta import Climber, describe, find_start, route_chain, search
 from colour import group as colour_group
 from colour import hold_colour
 from routes import best_group
@@ -76,6 +76,14 @@ else:
 holds = from_polygons(polys, img.height, mpp)
 finish = max(route, key=lambda i: holds[i].y)
 climber = Climber(height=climber_h)
+
+chain, why = route_chain(holds, route, climber)
+if chain is None:
+    print(f"route does not connect: {why}")
+    sys.exit(1)
+if len(chain) < len(route):
+    print(f"route chain uses {len(chain)} of {len(route)} holds; the rest are off the line")
+route, finish = chain, chain[-1]
 
 start = find_start(holds, climber, hands=route)
 if start is None:
