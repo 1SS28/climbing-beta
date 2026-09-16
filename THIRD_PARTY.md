@@ -1,8 +1,8 @@
 # Third-party terms
 
-The proprietary licence in LICENSE covers the original work in this repository.
-It does not override the terms below, which attach to components this project
-depends on. Both matter only on distribution; private use is unaffected.
+These terms attach to components this project depends on. They matter on
+distribution, which includes publishing the source publicly, and are what
+constrain the licence this project can carry.
 
 ## Ultralytics (YOLO11) - AGPL-3.0
 
@@ -11,8 +11,8 @@ import `ultralytics`. AGPL-3.0 is a strong copyleft licence: distributing a
 work that builds on it, or offering it as a network service, can oblige you to
 release the whole of that work under AGPL-3.0 as well.
 
-So the proprietary licence holds while the project stays private. Shipping it,
-as an app or a hosted service, means one of:
+Publishing the source, or shipping it as an app or hosted service, means one
+of:
 
 - buying an Ultralytics commercial licence, or
 - retraining on a permissively licensed architecture, or

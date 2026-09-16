@@ -178,5 +178,5 @@ a long download.
 
 ## Licence
 
-Proprietary, see LICENSE. Dependency terms that apply on distribution are in
-THIRD_PARTY.md.
+Not yet chosen. Dependency terms that apply once this is published or shipped
+are in THIRD_PARTY.md, and they decide what the options are.
