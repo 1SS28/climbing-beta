@@ -17,7 +17,18 @@ source = sys.argv[2] if len(sys.argv) > 2 else "data/yolo/images/test"
 conf = float(sys.argv[3]) if len(sys.argv) > 3 else 0.25
 
 results = YOLO(weights).predict(
-    source, imgsz=960, conf=conf, device="mps", save=True, project="runs", name="predict", exist_ok=True
+    source,
+    imgsz=960,
+    conf=conf,
+    device="mps",
+    save=True,
+    project="runs",
+    name="predict",
+    exist_ok=True,
+    # On a dense wall there are ~100 holds per photo, so boxes and labels cover
+    # the masks entirely. The mask is the output worth looking at.
+    show_labels=False,
+    show_boxes=False,
 )
 
 counts = [len(r.masks) if r.masks is not None else 0 for r in results]
