@@ -139,7 +139,16 @@ throughout) and the images are the whole of it.
 - Does colour clustering survive gym lighting, or is a wall-illumination
   correction needed first?
 - How should reach be calibrated without knowing the climber's height or the
-  wall's scale?
+  wall's scale? **The T-nut grid does not work.** The idea was that gym walls
+  are drilled on a regular lattice, so the bolt holes would be a ruler lying in
+  the image. Tested two ways in `lattice.py`, on three walls: dark-blob
+  detection plus a pair-distance histogram, and an FFT power spectrum of a
+  bare-wall patch. Neither finds a lattice — the blob method returns ~13,000
+  candidates per image (wall texture, not holes) and the FFT's top five radii
+  sit at 3.4-3.8x median with mutually inconsistent periods, where a real grid
+  would give one sharp peak. At these resolutions a T-nut is 3-5 px and
+  low-contrast, many are hidden behind holds, and perspective smears whatever
+  periodicity survives. Scale has to come from somewhere else.
 - Is a stance graph small enough to search exhaustively, or does it need
   pruning?
 - Should feet be restricted to route holds, or is smearing on the wall allowed?
