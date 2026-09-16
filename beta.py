@@ -22,7 +22,7 @@ class Climber:
     climber and a 190 cm climber genuinely do different moves — so this is the
     one knob that has to exist from the start."""
 
-    height: float = 1.75
+    height: float = 1.68  # 5'6"
     ape: float = 1.0  # arm span / height
 
     @property
@@ -31,11 +31,16 @@ class Climber:
 
     @property
     def body(self):
-        return 0.9 * self.height  # furthest a hand and a foot can sensibly be
+        # Foot to fingertip, fully extended: standing on a foothold and reaching
+        # overhead spans more than the climber is tall. 0.9x height was the
+        # first guess and it deadlocked every real route — the hands could not
+        # rise until the feet did, and the feet could not rise until the hands
+        # had, so nothing moved.
+        return 1.25 * self.height
 
     @property
     def torso_min(self):
-        return 0.34 * self.height  # hands this far above feet, at least
+        return 0.25 * self.height  # crouched, hands still above feet
 
     @property
     def step_max(self):
@@ -106,27 +111,45 @@ def stance_cost(stance, holds, c, w):
     return w.strain * strain + w.balance * balance + w.quality * quality
 
 
-def find_start(holds, c=Climber()):
+def eligible(holds, hands=None, feet=None):
+    """Which holds each limb may use.
+
+    Hands are the route; feet are usually anything on the wall. Gyms differ —
+    some set "colour holds only" for all four limbs — but restricting feet to a
+    sparse route makes most routes unclimbable on paper, which is a property of
+    the assumption rather than of the climb.
+    """
+    everything = list(range(len(holds)))
+    return (list(hands) if hands is not None else everything,
+            list(feet) if feet is not None else everything)
+
+
+def find_start(holds, c=Climber(), hands=None, feet=None):
     """Lowest stance the body actually fits into. Gyms mark the start holds and
     we cannot detect that marking, so the convention here is simply: start as
     low as possible. Left/right are assigned by x so the limbs are not crossed."""
-    order = sorted(range(len(holds)), key=lambda i: holds[i].y)
-    for fi in range(len(order)):
-        for fj in range(fi + 1, len(order)):
-            feet = sorted((order[fi], order[fj]), key=lambda i: holds[i].x)
-            for hi in range(len(order)):
-                for hj in range(hi + 1, len(order)):
-                    hands = sorted((order[hi], order[hj]), key=lambda i: holds[i].x)
-                    stance = (hands[0], hands[1], feet[0], feet[1])
+    hand_ok, foot_ok = eligible(holds, hands, feet)
+    by_height = lambda s: sorted(s, key=lambda i: holds[i].y)  # noqa: E731
+    hs, fs = by_height(hand_ok), by_height(foot_ok)
+    for fi in range(len(fs)):
+        for fj in range(fi + 1, len(fs)):
+            ft = sorted((fs[fi], fs[fj]), key=lambda i: holds[i].x)
+            for hi in range(len(hs)):
+                for hj in range(hi + 1, len(hs)):
+                    hd = sorted((hs[hi], hs[hj]), key=lambda i: holds[i].x)
+                    stance = (hd[0], hd[1], ft[0], ft[1])
                     if feasible(stance, holds, c):
                         return stance
     return None
 
 
-def search(holds, start, finish, c=Climber(), w=Costs(), max_expansions=200_000):
+def search(holds, start, finish, c=Climber(), w=Costs(), hands=None, feet=None,
+           max_expansions=200_000):
     """Dijkstra over stances. Returns (path, cost) or (None, reason)."""
     if not feasible(start, holds, c):
         return None, "start stance is not physically reachable"
+    hand_ok, foot_ok = eligible(holds, hands, feet)
+    allowed = (hand_ok, hand_ok, foot_ok, foot_ok)  # LH, RH, LF, RF
 
     reach = c.step_max  # one move repositions one limb; it is not a teleport
     dist = {start: 0.0}
@@ -153,7 +176,7 @@ def search(holds, start, finish, c=Climber(), w=Costs(), max_expansions=200_000)
 
         for limb in range(4):
             here = holds[s[limb]].pos
-            for j in range(len(holds)):
+            for j in allowed[limb]:
                 if j == s[limb]:
                     continue
                 step = float(np.linalg.norm(holds[j].pos - here))

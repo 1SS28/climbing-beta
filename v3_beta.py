@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw
 from beta import Climber, describe, find_start, search
 from colour import group as colour_group
 from colour import hold_colour
+from routes import best_group
 from scene import from_polygons, scale_from_reference
 
 src = sys.argv[1]
@@ -45,7 +46,21 @@ for poly in result.masks.xy:
 
 labels = colour_group(colours, 15.0)
 sizes = np.bincount(labels)
-pick = int(np.argmax(sizes)) if want < 0 else want
+
+if want >= 0:
+    pick = want
+else:
+    # Not the largest group — that is usually the neutral greys, which are wall
+    # furniture rather than a line. Pick the most route-like one instead.
+    centres = np.array([np.asarray(p).mean(axis=0) for p in polys])
+    by_group = {g: centres[labels == g] for g in range(len(sizes))}
+    centroids = {g: np.array(colours)[labels == g].mean(axis=0) for g in by_group}
+    pick, sc = best_group(by_group, centroids, img.height)
+    if pick is None:
+        print("no group looks like a route — nothing rises, chains and is saturated")
+        sys.exit(1)
+    print(f"route-likeness {sc:.3f}")
+
 route = [i for i, l in enumerate(labels) if l == pick]
 print(f"{len(polys)} holds, {len(sizes)} groups; climbing group {pick} ({len(route)} holds)")
 
@@ -57,15 +72,18 @@ else:
     mpp = 4.5 / img.height
     print(f"scale: ASSUMED 4.5 m over the full frame -> {mpp * 1000:.2f} mm/px (pass a reference)")
 
-holds = from_polygons([polys[i] for i in route], img.height, mpp)
-finish = int(np.argmax([h.y for h in holds]))
+# Every detected hold goes into the scene: hands are limited to the route,
+# but feet may use anything on the wall, as they can in most gyms.
+holds = from_polygons(polys, img.height, mpp)
+finish = max(route, key=lambda i: holds[i].y)
+climber = Climber(height=climber_h)
 
-start = find_start(holds)
+start = find_start(holds, climber, hands=route)
 if start is None:
     print("no feasible start stance — holds too far apart for this climber")
     sys.exit(1)
 
-path, info = search(holds, start, finish, c=Climber(height=climber_h))
+path, info = search(holds, start, finish, c=climber, hands=route)
 if path is None:
     print(f"no beta found: {info}")
     sys.exit(1)
@@ -76,10 +94,10 @@ for line in describe(path, holds):
 
 # Draw the route holds with their index, and the moving limb's track per move.
 draw = ImageDraw.Draw(img, "RGBA")
-centres = [np.array(polys[i]).mean(axis=0) for i in route]
-for n, c in enumerate(centres):
-    draw.ellipse([c[0] - 16, c[1] - 16, c[0] + 16, c[1] + 16], outline=(255, 255, 255, 255), width=3)
-    draw.text((c[0] - 4, c[1] - 6), str(n), fill=(255, 255, 255, 255))
+centres = [np.array(p).mean(axis=0) for p in polys]
+for i in route:  # ring the route holds; feet may use others, so leave them plain
+    c = centres[i]
+    draw.ellipse([c[0] - 18, c[1] - 18, c[0] + 18, c[1] + 18], outline=(255, 255, 255, 255), width=4)
 for a, b in zip(path, path[1:]):
     limb = next(i for i in range(4) if a[i] != b[i])
     p, q = centres[a[limb]], centres[b[limb]]
