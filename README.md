@@ -97,7 +97,20 @@ reason to pay for the complexity now.
 Group holds into routes by colour.
 
 ### V3
-Stance graph and shortest-path beta search on ground-truth holds.
+**Done.** Stance graph and shortest-path search, in `beta.py`, over the metric
+scene in `scene.py` — never over pixels, so the search survives being handed
+ARKit depth instead of a photo.
+
+Two things the search taught us, both by failing first:
+
+- Given any freedom, it stacked all four limbs on one hold and shuffled up the
+  wall. Coincident contact points drive strain and balance to zero, so a
+  degenerate stance is globally optimal unless the body is given a length. The
+  fix is a minimum torso span, plus a cap of two limbs per hold.
+- A jointed body model was tempting and was dropped. Shoulder, hip and torso
+  parameters cannot be recovered from a photo, and each invented number would
+  quietly decide the beta. Only the distances between the four contact points
+  are constrained, because only those are observable.
 
 ### V4
 Run the whole pipeline end to end on an unseen photo.
