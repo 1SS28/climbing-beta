@@ -37,7 +37,7 @@ rows = []
 
 for path in photos:
     try:
-        result = model.predict(str(path), imgsz=960, conf=conf, device="mps", verbose=False)[0]
+        result = model.predict(str(path), imgsz=1600, conf=conf, device="mps", verbose=False)[0]
     except Exception as exc:
         print(f"{path.name}: failed to read ({exc})")
         continue

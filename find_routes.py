@@ -27,7 +27,7 @@ files = sorted(Path("data/climbinst/train/images").glob("*.jpg"))[:limit]
 rows = []
 for n, f in enumerate(files):
     try:
-        result = model.predict(str(f), imgsz=960, conf=0.35, device="mps", verbose=False)[0]
+        result = model.predict(str(f), imgsz=1600, conf=0.35, device="mps", verbose=False)[0]
         if result.masks is None:
             continue
         img = Image.open(f).convert("RGB")

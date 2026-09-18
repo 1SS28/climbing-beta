@@ -22,7 +22,7 @@ threshold = float(sys.argv[4]) if len(sys.argv) > 4 else 15.0
 
 from ultralytics import YOLO  # noqa: E402  (slow import, keep it after arg parsing)
 
-result = YOLO(weights).predict(src, imgsz=960, conf=0.3, device="mps", verbose=False)[0]
+result = YOLO(weights).predict(src, imgsz=1600, conf=0.3, device="mps", verbose=False)[0]
 img = Image.open(src).convert("RGB")
 rgb = np.array(img)
 

@@ -31,7 +31,7 @@ calib_path = Path(src).with_suffix(".calib.json")
 
 from ultralytics import YOLO  # noqa: E402
 
-result = YOLO("runs/v1_960_best.pt").predict(src, imgsz=960, conf=0.3, device="mps", verbose=False)[0]
+result = YOLO("runs/v1_960_best.pt").predict(src, imgsz=1600, conf=0.3, device="mps", verbose=False)[0]
 img = Image.open(src).convert("RGB")
 rgb = np.array(img)
 

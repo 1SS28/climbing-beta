@@ -4,6 +4,11 @@
 
 Mainly for the domain-shift check: train.py reports a score on ClimbInst's own
 distribution, which is not the gym you climb at.
+
+Inference runs at 1600 rather than the 960 it trained at. Confidence tracks
+apparent hold size strongly (0.64 for the smallest quarter against 0.94 for the
+largest), so resolution buys real recall: on a steep prow it found 188 holds at
+1600 against 164 at 960, for 0.16s more per image.
 """
 
 import sys
@@ -17,7 +22,7 @@ conf = float(sys.argv[3]) if len(sys.argv) > 3 else 0.25
 
 results = YOLO(weights).predict(
     source,
-    imgsz=960,
+    imgsz=1600,
     conf=conf,
     device="mps",
     save=True,
