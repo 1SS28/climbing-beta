@@ -43,6 +43,44 @@ def scale_from_reference(p1, p2, metres):
     return metres / span
 
 
+# Bouldering walls. 6 m is already tall for a boulder, so a scale implying more
+# than this is wrong, and saying so beats propagating it through the geometry.
+MAX_WALL_M = 6.0
+
+# Common commercial T-nut spacings, metres. North American walls are usually on
+# 8 inches; a lot of European hardware is on 125 or 150 mm. MoonBoard is 200 mm.
+COMMON_TNUT_SPACING = {"8in": 0.2032, "200mm": 0.200, "150mm": 0.150, "125mm": 0.125}
+
+
+def scale_from_tnuts(p1, p2, holes_apart=1, spacing_m=0.2032):
+    """Metres per pixel from two T-nut centres a known number of holes apart.
+
+    Better than a person or a wall height for one reason: the bolt holes lie in
+    the wall plane, so the scale is exact where the holds are. A person standing
+    in front of the wall is nearer the camera and reads slightly large.
+
+    The grid is also the same everywhere on a wall and present on every wall, so
+    a gym only has to be asked once, and holes_apart lets the two points be far
+    apart, which divides the clicking error by that count.
+    """
+    if holes_apart < 1:
+        raise ValueError("holes_apart must be at least 1")
+    px = float(np.hypot(p2[0] - p1[0], p2[1] - p1[1]))
+    if px < 1.0:
+        raise ValueError("the two points are the same pixel")
+    return (spacing_m * holes_apart) / px
+
+
+def plausible(metres_per_pixel, image_height_px, max_wall_m=MAX_WALL_M):
+    """Sanity-check a scale against what a bouldering wall can be.
+
+    Every scale so far has been a guess that silently decided the geometry, and
+    a wrong one swung route connectivity from 9/10 to 2/10. Cheap to check.
+    """
+    implied = metres_per_pixel * image_height_px
+    return 1.5 <= implied <= max_wall_m * 2.5, implied
+
+
 def scale_from_person(person_px_height, person_m=1.70):
     """Metres per pixel, from a person of known height standing in the frame.
 
