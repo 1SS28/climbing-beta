@@ -43,6 +43,38 @@ def scale_from_reference(p1, p2, metres):
     return metres / span
 
 
+def scale_from_person(person_px_height, person_m=1.70):
+    """Metres per pixel, from a person of known height standing in the frame.
+
+    The focal length cancels: at the subject's own depth the scale is just
+    height over pixel height. That holds only at their depth, so it transfers
+    to the wall when they stand against it, and drifts when they do not.
+
+    Chosen over monocular metric depth, which was tested and rejected: Depth
+    Anything V2 Metric Indoor put a climber 3.50 m away at 4.96-5.38 m (Small
+    +54/+73%, Base +42/+48%), a bias too large to build on. Gyms are far outside
+    its training distribution.
+
+    Most gym photos contain a climber, so this is automatic in the common case,
+    needs no calibration, and works at a gym nobody has visited before. The
+    error is whatever the height guess is wrong by, a few percent, rather than
+    the factor of two an assumed wall height can be out by.
+    """
+    if person_px_height <= 0:
+        raise ValueError("person height in pixels must be positive")
+    return person_m / float(person_px_height)
+
+
+def focal_px_from_exif(focal_35mm, long_edge_px):
+    """Focal length in pixels, from the 35mm-equivalent focal length in EXIF.
+
+    Needed only to move scale between depths: metres per pixel at distance D is
+    D / focal_px. iPhones record this (an iPhone 17 Pro main camera reports 24mm,
+    giving 3808 px on a 5712 px edge).
+    """
+    return (float(focal_35mm) / 36.0) * float(long_edge_px)
+
+
 def from_polygons(polys, image_height_px, metres_per_pixel):
     """Detected mask polygons -> holds in metres.
 

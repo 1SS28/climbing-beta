@@ -69,13 +69,16 @@ for path in photos:
     centroids = {g: np.array(colours)[labels == g].mean(axis=0) for g in by_group}
     pick, sc = best_group(by_group, centroids, img.height)
 
+    # Scale the overlay to the source resolution: a phone photo is ~5700 px
+    # wide, and a fixed line width vanishes once the image is shrunk to view.
+    k = max(1, round(img.width / 900))
     draw = ImageDraw.Draw(img, "RGBA")
     for i, poly in enumerate(polys):
         on_route = pick is not None and labels[i] == pick
         draw.polygon(
             [tuple(p) for p in poly],
-            outline=(255, 60, 60, 255) if on_route else (255, 255, 255, 110),
-            width=6 if on_route else 2,
+            outline=(255, 40, 40, 255) if on_route else (90, 220, 255, 190),
+            width=5 * k if on_route else 2 * k,
         )
     img.thumbnail((1400, 1400))
     img.save(out / f"{path.stem}.png")
