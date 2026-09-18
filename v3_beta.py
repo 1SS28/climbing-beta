@@ -16,7 +16,7 @@ from beta import Climber, describe, find_start, route_chain, search
 from colour import group as colour_group
 from colour import hold_colour
 from routes import best_group
-from scene import from_polygons, scale_from_reference
+from scene import from_polygons, from_wall_plane, scale_from_reference
 
 src = sys.argv[1]
 want = int(sys.argv[2]) if len(sys.argv) > 2 else -1
@@ -25,6 +25,9 @@ want = int(sys.argv[2]) if len(sys.argv) > 2 else -1
 # recovered from one photo, so it is an input, not a guess.
 ref = sys.argv[3] if len(sys.argv) > 3 else None
 climber_h = float(sys.argv[4]) if len(sys.argv) > 4 else 1.68
+# A wall calibration, if one exists, beats any single scale: it removes
+# perspective as well as fixing the units.
+calib_path = Path(src).with_suffix(".calib.json")
 
 from ultralytics import YOLO  # noqa: E402
 
@@ -64,16 +67,22 @@ else:
 route = [i for i, l in enumerate(labels) if l == pick]
 print(f"{len(polys)} holds, {len(sizes)} groups; climbing group {pick} ({len(route)} holds)")
 
-if ref:
+if calib_path.exists():
+    import calibrate as _cal
+    cal = _cal.load(calib_path)
+    holds = from_wall_plane(polys, cal["H"])
+    angle = cal.get("wall_angle_deg")
+    print(f"calibrated: {cal['metres_per_pixel']*1000:.2f} mm/px"
+          + (f", wall {angle:+.1f} deg" if angle is not None else ""))
+elif ref:
     y_top, y_bot, metres = (float(v) for v in ref.split(","))
     mpp = scale_from_reference((0, y_top), (0, y_bot), metres)
     print(f"scale: {metres} m over {abs(y_bot - y_top):.0f} px -> {mpp * 1000:.2f} mm/px")
+    holds = from_polygons(polys, img.height, mpp)
 else:
     mpp = 4.5 / img.height
-    print(f"scale: ASSUMED 4.5 m over the full frame -> {mpp * 1000:.2f} mm/px (pass a reference)")
-
-# Hands are limited to the route, feet may use any hold, as in most gyms.
-holds = from_polygons(polys, img.height, mpp)
+    print(f"scale: ASSUMED 4.5 m over the full frame -> {mpp*1000:.2f} mm/px (pass a reference)")
+    holds = from_polygons(polys, img.height, mpp)
 finish = max(route, key=lambda i: holds[i].y)
 climber = Climber(height=climber_h)
 

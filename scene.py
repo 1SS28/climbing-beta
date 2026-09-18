@@ -113,6 +113,27 @@ def focal_px_from_exif(focal_35mm, long_edge_px):
     return (float(focal_35mm) / 36.0) * float(long_edge_px)
 
 
+def from_wall_plane(polys, H):
+    """Detected mask polygons -> holds, using a wall calibration.
+
+    Maps each mask through the homography onto the wall itself, so perspective
+    is removed rather than assumed away: a hold high on the wall stops reading
+    as smaller than one at eye level, and distances are measured along the wall
+    instead of across the image. This is what from_polygons approximates when
+    no calibration exists.
+    """
+    from wall import to_wall_metres
+
+    holds = []
+    for poly in polys:
+        p = np.asarray(poly, dtype=float)
+        on_wall = to_wall_metres(H, p)
+        cx, cy = on_wall[:, 0].mean(), on_wall[:, 1].mean()
+        holds.append(Hold(x=float(cx), y=float(cy), z=0.0,
+                          size=float(np.sqrt(polygon_area(on_wall)))))
+    return holds
+
+
 def from_polygons(polys, image_height_px, metres_per_pixel):
     """Detected mask polygons -> holds in metres.
 
@@ -120,17 +141,16 @@ def from_polygons(polys, image_height_px, metres_per_pixel):
     across the frame. Perspective breaks this: holds high on the wall are
     further away and read smaller.
     """
-    mpp = metres_per_pixel
     holds = []
     for poly in polys:
         p = np.asarray(poly, dtype=float)
         cx, cy = p[:, 0].mean(), p[:, 1].mean()
         holds.append(
             Hold(
-                x=cx * mpp,
-                y=(image_height_px - cy) * mpp,  # pixels run down, the wall runs up
+                x=cx * metres_per_pixel,
+                y=(image_height_px - cy) * metres_per_pixel,  # pixels run down, the wall runs up
                 z=0.0,
-                size=float(np.sqrt(polygon_area(p)) * mpp),
+                size=float(np.sqrt(polygon_area(p)) * metres_per_pixel),
             )
         )
     return holds
