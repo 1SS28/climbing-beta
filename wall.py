@@ -13,13 +13,17 @@ What it buys, all from hardware present on every wall in every gym:
 - the wall's angle, which is what a flat-wall assumption gets wrong on an
   overhang, and overhangs are where balance decides whether a move works
 
-Four holes is the mathematical minimum and nowhere near enough in practice.
-With 2 px of error on each clicked point, a 2x2 block recovers a 25 degree wall
-to within 20 degrees, which is worthless; 4x3 gives 3.6 degrees, and 6x5 gives
-0.7. The decomposition amplifies small errors when the points are close
-together relative to the frame, so the grid has to be both numerous and spread
-out. That makes automatic detection of the holes a requirement rather than a
-convenience: nobody is tapping thirty bolt holes by hand.
+How many holes are needed matters far less than how far apart they are. At 5 px
+of error, four adjacent holes 0.2 m apart recover a 25 degree wall to within 35
+degrees, which is worthless, while the four corners of a 2 m block give 0.69
+degrees and thirty-six holes over the same 2 m give 0.38. Spread carries the
+accuracy; count barely adds.
+
+So four taps are enough, provided they are far apart. At ordinary finger
+accuracy on a phone (5 screen pixels, about 18 image pixels), corners 2 m apart
+give 2.5 degrees and 3 m apart give 1.3. Automatic detection is an upgrade
+rather than a prerequisite, which matches the published result that four corner
+points of a 350-hole grid reproject almost as well as all 350.
 
 Numpy only, no OpenCV.
 """
