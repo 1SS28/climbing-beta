@@ -168,3 +168,51 @@ def grow(points, seed, a, b, snap=0.35, refit_every=6):
             elif abs(nxt[0]) <= 12 and abs(nxt[1]) <= 12:
                 missing.append(nxt)   # expected a hole, found none: occluded
     return confirmed, missing
+
+
+def sobel(g):
+    """Image gradients, by shifts rather than a convolution library."""
+    up, dn = np.roll(g, -1, 0), np.roll(g, 1, 0)
+    lf, rt = np.roll(g, -1, 1), np.roll(g, 1, 1)
+    ul, ur = np.roll(up, -1, 1), np.roll(up, 1, 1)
+    dl, dr = np.roll(dn, -1, 1), np.roll(dn, 1, 1)
+    gx = (ur + 2 * rt + dr) - (ul + 2 * lf + dl)
+    gy = (dl + 2 * dn + dr) - (ul + 2 * up + ur)
+    return gx, gy
+
+
+def hough_circles(gray, radii=(5, 6, 7, 8, 9), grad_min=18.0, vote_min=0.45):
+    """Circle centres by Hough voting along gradient directions.
+
+    A bolt hole is not merely dark, it is a dark disk with a circular rim, and
+    only the rim's gradients agree on where the centre is. Chalk, wood grain and
+    panel seams are dark too but their edges point every which way, so they
+    scatter votes instead of piling them up. That is the part plain blob
+    detection could not separate.
+    """
+    gx, gy = sobel(gray)
+    mag = np.hypot(gx, gy)
+    ys, xs = np.nonzero(mag > grad_min)
+    if len(ys) == 0:
+        return np.zeros((0, 2)), np.zeros(0)
+    ux, uy = gx[ys, xs] / mag[ys, xs], gy[ys, xs] / mag[ys, xs]
+
+    h, w = gray.shape
+    best_acc = np.zeros((h, w), dtype=np.float32)
+    for r in radii:
+        acc = np.zeros((h, w), dtype=np.float32)
+        for sign in (1, -1):  # dark-on-light or light-on-dark
+            cx = np.clip((xs + sign * r * ux).astype(int), 0, w - 1)
+            cy = np.clip((ys + sign * r * uy).astype(int), 0, h - 1)
+            np.add.at(acc, (cy, cx), 1.0)
+        acc /= (2 * np.pi * r)          # normalise: bigger circles gather more votes
+        best_acc = np.maximum(best_acc, acc)
+
+    sep = max(radii)
+    peak = best_acc.copy()
+    for dy in range(-sep, sep + 1):
+        for dx in range(-sep, sep + 1):
+            if dy or dx:
+                peak = np.maximum(peak, np.roll(np.roll(best_acc, dy, 0), dx, 1))
+    hits = np.argwhere((best_acc >= peak) & (best_acc > vote_min))
+    return hits[:, ::-1].astype(float), best_acc[hits[:, 0], hits[:, 1]]
