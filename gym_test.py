@@ -21,7 +21,7 @@ from routes import best_group
 
 folder = Path(sys.argv[1] if len(sys.argv) > 1 else "data/mygym")
 weights = sys.argv[2] if len(sys.argv) > 2 else "runs/v1_960_best.pt"
-conf = float(sys.argv[3]) if len(sys.argv) > 3 else 0.3
+conf = float(sys.argv[3]) if len(sys.argv) > 3 else 0.15
 
 from ultralytics import YOLO  # noqa: E402
 

@@ -18,7 +18,7 @@ from ultralytics import YOLO
 
 weights = sys.argv[1] if len(sys.argv) > 1 else "runs/v1_960_best.pt"
 source = sys.argv[2] if len(sys.argv) > 2 else "data/yolo/images/test"
-conf = float(sys.argv[3]) if len(sys.argv) > 3 else 0.25
+conf = float(sys.argv[3]) if len(sys.argv) > 3 else 0.15
 
 results = YOLO(weights).predict(
     source,
