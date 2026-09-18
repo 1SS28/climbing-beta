@@ -208,11 +208,18 @@ def hough_circles(gray, radii=(5, 6, 7, 8, 9), grad_min=18.0, vote_min=0.45):
         acc /= (2 * np.pi * r)          # normalise: bigger circles gather more votes
         best_acc = np.maximum(best_acc, acc)
 
+    # Separable max filter. A square max is the max over rows of the max over
+    # columns, so this is 2*(2r+1) passes rather than (2r+1) squared: on a
+    # 24-megapixel image that is 38 rolls instead of 361, and each roll
+    # allocates ~96 MB, so the naive version thrashed memory for minutes.
     sep = max(radii)
-    peak = best_acc.copy()
+    tmp = best_acc.copy()
     for dy in range(-sep, sep + 1):
-        for dx in range(-sep, sep + 1):
-            if dy or dx:
-                peak = np.maximum(peak, np.roll(np.roll(best_acc, dy, 0), dx, 1))
+        if dy:
+            tmp = np.maximum(tmp, np.roll(best_acc, dy, 0))
+    peak = tmp.copy()
+    for dx in range(-sep, sep + 1):
+        if dx:
+            peak = np.maximum(peak, np.roll(tmp, dx, 1))
     hits = np.argwhere((best_acc >= peak) & (best_acc > vote_min))
     return hits[:, ::-1].astype(float), best_acc[hits[:, 0], hits[:, 1]]
