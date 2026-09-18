@@ -181,7 +181,7 @@ def sobel(g):
     return gx, gy
 
 
-def hough_circles(gray, radii=(5, 6, 7, 8, 9), grad_min=18.0, vote_min=0.45):
+def hough_circles(gray, radii=(6, 7, 8, 9), grad_min=18.0, vote_min=0.45):
     """Circle centres by Hough voting along gradient directions.
 
     A bolt hole is not merely dark, it is a dark disk with a circular rim, and

@@ -11,6 +11,16 @@ ordinary tapping accuracy, corners 2 m apart recover the wall angle to about
 2.5 degrees and 3 m apart to 1.3, while four adjacent holes give 35. Pick the
 widest block of clean wall in the frame.
 
+All four must lie on ONE flat panel. Do not span a corner, a fold, or the join
+between two faces. Four points define a homography exactly, so a set straddling
+two planes fits with zero residual and returns a confident wrong answer, with
+nothing to warn you. A wall made of several faces needs a calibration each.
+
+Bolt spacing is regular within a panel but not across one. Screw-on holds also
+leave holes off the grid; those are outliers a lattice fit discards, but they
+are not valid calibration points, so pick holes that clearly sit on the
+repeating pattern.
+
 A wall only has to be done once. The result is written as JSON and reused by
 any photo taken from the same position.
 """
