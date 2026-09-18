@@ -102,55 +102,125 @@ def lattice_basis(points, max_px=400.0, bins=80):
     """The two shortest repeating displacement vectors among the candidates.
 
     Displacements between neighbouring bolt holes pile up at the grid spacing;
-    displacements involving junk scatter. Taking the two strongest peaks that
-    are not parallel gives the grid's own axes, without knowing them in advance.
+    displacements involving junk scatter. The strongest peak alone is not
+    enough, because a two-hole step generates nearly as many pairs as a one-hole
+    step, so the peak is often a harmonic: on a real wall that gave 130 px for a
+    grid whose true spacing is 65. Taking the shortest peak instead lands in the
+    noise floor. So take the strongest, then walk down its own halves and thirds
+    for as long as they are still supported.
     """
     if len(points) < 8:
         return None
-    d = points[:, None, :] - points[None, :, :]
-    d = d.reshape(-1, 2)
-    d = d[(np.hypot(d[:, 0], d[:, 1]) > 8) & (np.hypot(d[:, 0], d[:, 1]) < max_px)]
+    d = (points[:, None, :] - points[None, :, :]).reshape(-1, 2)
+    r = np.hypot(d[:, 0], d[:, 1])
+    d = d[(r > 8) & (r < max_px)]
     if len(d) < 20:
         return None
 
     hist, xe, ye = np.histogram2d(d[:, 0], d[:, 1], bins=bins,
                                   range=[[-max_px, max_px], [-max_px, max_px]])
-    xc = 0.5 * (xe[:-1] + xe[1:])
-    yc = 0.5 * (ye[:-1] + ye[1:])
-    idx = np.dstack(np.meshgrid(xc, yc, indexing="ij"))
-    flat = [(hist[i, j], idx[i, j]) for i in range(bins) for j in range(bins) if hist[i, j] > 0]
-    flat.sort(key=lambda t: -t[0])
 
-    first = None
-    for _, v in flat:
-        if np.hypot(*v) < 15:
-            continue
-        if first is None:
-            first = v
-            continue
-        # second axis: not parallel to the first
-        cross = abs(first[0] * v[1] - first[1] * v[0])
-        if cross > 0.35 * np.hypot(*first) * np.hypot(*v):
-            return np.array(first), np.array(v)
+    def support(v):
+        """How many displacements land in the bin containing v."""
+        i = np.searchsorted(xe, v[0]) - 1
+        j = np.searchsorted(ye, v[1]) - 1
+        if not (0 <= i < bins and 0 <= j < bins):
+            return 0.0
+        return float(hist[max(0,i-1):i+2, max(0,j-1):j+2].sum())
+
+    xc, yc = 0.5 * (xe[:-1] + xe[1:]), 0.5 * (ye[:-1] + ye[1:])
+    peaks = [(hist[i, j], np.array([xc[i], yc[j]]))
+             for i in range(bins) for j in range(bins)
+             if hist[i, j] > 0 and np.hypot(xc[i], yc[j]) > 12]
+    if not peaks:
+        return None
+    peaks.sort(key=lambda t: -t[0])
+
+    def fundamental(v):
+        """Step down to v/2 or v/3 while the shorter vector is still supported."""
+        for _ in range(3):
+            for k in (2, 3):
+                w = v / k
+                if np.hypot(*w) > 12 and support(w) >= 0.30 * support(v):
+                    v = w
+                    break
+            else:
+                return v
+        return v
+
+    a = fundamental(peaks[0][1])
+    la = np.hypot(*a)
+    for _, v in peaks:
+        v = fundamental(v)
+        lb = np.hypot(*v)
+        if abs(a[0]*v[1] - a[1]*v[0]) > 0.35 * la * lb:
+            return a, v
     return None
 
 
-def on_lattice(points, a, b, tol=0.22):
-    """Keep candidates that sit near an integer combination of the basis.
+def seed_patch(points, a, b, tol=0.18, min_hits=6, darkness=None):
+    """The most grid-consistent neighbourhood, to start growing from.
 
-    This is the filter: bolt holes land on the grid, hair does not. It works on
-    a real wall but under-selects, because one fixed basis is an affine model of
-    what perspective makes projective. Holes further from the camera sit closer
-    together in the image, so a single spacing fits only part of the frame and
-    genuine holes elsewhere get rejected.
-
-    The fix is to seed a homography from a local patch where the spacing is
-    near-constant, then re-assign every candidate under that homography and
-    refit. Not yet implemented.
+    Growth propagates whatever the seed believes, so it must start somewhere the
+    evidence is strong: the point whose neighbours best match the basis.
     """
-    B = np.column_stack([a, b])
-    origin = points[len(points) // 2]
-    coords = np.linalg.lstsq(B, (points - origin).T, rcond=None)[0].T
-    off = np.abs(coords - np.round(coords))
-    keep = (off.max(axis=1) < tol)
-    return points[keep], coords[keep]
+    best, best_n = None, 0
+    for i, p in enumerate(points):
+        if darkness is not None and darkness[i] < np.median(darkness):
+            continue  # seed on a convincing hole, not a faint mark or hold edge
+        d = points - p
+        coords = np.linalg.lstsq(np.column_stack([a, b]), d.T, rcond=None)[0].T
+        near = coords[(np.abs(coords) <= 2.5).all(axis=1)]
+        hits = int((np.abs(near - np.round(near)).max(axis=1) < tol).sum())
+        if hits > best_n:
+            best, best_n = i, hits
+    return (best, best_n) if best_n >= min_hits else (None, best_n)
+
+
+def grow(points, seed, a, b, snap=0.35, refit_every=6):
+    """Grow the lattice hole by hole from a seed.
+
+    Each step predicts where the next hole should be from the geometry already
+    confirmed, then looks for a candidate there. Once four holes are known the
+    prediction comes from a homography refitted as it goes, so perspective is
+    measured rather than assumed, and the affine basis is only ever used to get
+    started.
+
+    Returns (confirmed, missing): confirmed maps integer grid coordinates to
+    image points; missing lists grid coordinates that were predicted, sit
+    inside the explored area, and had no hole. Those are the interesting ones,
+    since something is covering them.
+    """
+    from wall import homography
+
+    pts = np.asarray(points, dtype=float)
+    confirmed = {(0, 0): pts[seed]}
+    frontier = [(0, 0)]
+    missing, H, tried = [], None, {(0, 0)}
+    step = min(np.hypot(*a), np.hypot(*b))
+
+    while frontier:
+        cell = frontier.pop(0)
+        for d in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nxt = (cell[0] + d[0], cell[1] + d[1])
+            if nxt in tried:
+                continue
+            tried.add(nxt)
+
+            if H is not None:  # projective prediction, valid across the frame
+                q = np.array([nxt[0], nxt[1], 1.0]) @ H.T
+                pred = q[:2] / q[2]
+            else:              # affine fallback, only until four holes are known
+                pred = confirmed[cell] + d[0] * a + d[1] * b
+
+            dist = np.hypot(*(pts - pred).T)
+            j = int(np.argmin(dist))
+            if dist[j] < snap * step:
+                confirmed[nxt] = pts[j]
+                frontier.append(nxt)
+                if len(confirmed) >= 4 and len(confirmed) % refit_every == 0:
+                    cells = np.array(list(confirmed.keys()), dtype=float)
+                    H = homography(cells, np.array(list(confirmed.values())))
+            elif abs(nxt[0]) <= 12 and abs(nxt[1]) <= 12:
+                missing.append(nxt)   # expected a hole, found none: occluded
+    return confirmed, missing
