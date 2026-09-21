@@ -47,9 +47,13 @@ def scale_from_reference(p1, p2, metres):
 # than this is wrong, and saying so beats propagating it through the geometry.
 MAX_WALL_M = 6.0
 
-# Common commercial T-nut spacings, metres. North American walls are usually on
-# 8 inches; a lot of European hardware is on 125 or 150 mm. MoonBoard is 200 mm.
-COMMON_TNUT_SPACING = {"8in": 0.2032, "200mm": 0.200, "150mm": 0.150, "125mm": 0.125}
+# Common commercial T-nut spacings, metres. 6 and 8 inches are both used in
+# North America, 125 and 150 mm in Europe, and MoonBoard is 200 mm. Ask the gym
+# rather than assume: 6 inches against 8 is a 33% scale error, and scale
+# multiplies through every distance the beta search compares.
+COMMON_TNUT_SPACING = {"6in": 0.1524, "8in": 0.2032, "200mm": 0.200,
+                       "150mm": 0.150, "125mm": 0.125}
+DEFAULT_TNUT_SPACING = 0.1524  # 6 in
 
 
 def scale_from_tnuts(p1, p2, holes_apart=1, spacing_m=0.2032):

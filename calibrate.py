@@ -4,7 +4,8 @@
 
 The four points are bolt holes at the corners of a block N holes wide and M
 holes tall, given in the order top-left, top-right, bottom-left, bottom-right.
-Spacing defaults to 8 inches; pass --spacing for a gym that differs.
+Spacing defaults to 6 inches (152.4 mm); pass --spacing for a gym that differs.
+Getting this wrong scales everything: 6 inches against 8 is 33% out.
 
 Accuracy comes from how far apart the corners are, not how many are used: at
 ordinary tapping accuracy, corners 2 m apart recover the wall angle to about
@@ -35,7 +36,7 @@ from scene import MAX_WALL_M
 from wall import homography, intrinsics, plane_from_homography, to_wall_metres, wall_angle
 
 
-def calibrate(corners_px, cols, rows, spacing_m, image_size, focal_px=None):
+def calibrate(corners_px, cols, rows, spacing_m=0.1524, image_size=None, focal_px=None):
     """Four corner bolt holes -> a wall calibration.
 
     Returns the homography from wall metres to image pixels, the wall angle
@@ -85,7 +86,7 @@ def main():
     ap.add_argument("corners", nargs=4, help="x,y of TL TR BL BR bolt holes")
     ap.add_argument("--cols", type=int, required=True, help="gaps between left and right holes")
     ap.add_argument("--rows", type=int, required=True, help="gaps between bottom and top holes")
-    ap.add_argument("--spacing", type=float, default=0.2032, help="metres between holes")
+    ap.add_argument("--spacing", type=float, default=0.1524, help="metres between holes (default 6 in)")
     ap.add_argument("--focal-px", type=float, default=None, help="focal length, for the wall angle")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
