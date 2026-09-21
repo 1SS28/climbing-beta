@@ -12,20 +12,29 @@ on gradient direction, fit a lattice in a small window where perspective is
 near-uniform, grow it outward refitting a homography as it goes, then decompose
 that homography with the focal length from EXIF.
 
-STATUS: does not work yet. Detection is fine; the lattice fit is not. Hough
-returns ~940 candidates on a real wall, but RANSAC then fits a basis that
-merely connects a few of them by coincidence: probing outward from the seed,
-the +a and +b directions land exactly (they were built from real points, so
-that is circular) while -a and -b miss by 40 to 77 px. Growing therefore dies
-at three holes.
+STATUS: produces plausible-looking numbers that are not yet repeatable. Do not
+trust its output.
 
-Two causes worth fixing before trying again. The seed heuristic picks the
-densest 400 px cell, which keeps landing at x=137 and x=197, the frame's left
-edge where artefacts cluster rather than bare panel. And RANSAC accepts a basis
-on six inliers, which is far too weak to distinguish a grid from a coincidence.
+One run on IMG_3495 found 53 holes with a 0.06-hole residual, giving 1.12 mm/px
+and a camera 4.28 m away, which agrees with the climber measured at 3.50 m in
+the same frame. A later run on the same photo found 81 holes with a 0.19-hole
+residual, 0.52 mm/px and a camera at 2.67 m: nearer than the climber standing
+in front of the wall, which is impossible. The wall angle moved from +11.9 to
++1.9 degrees between those runs, and IMG_3497, an overhang, came back at -15.9,
+i.e. leaning away.
 
-Four tapped corners recover the same wall angle to about 2 degrees and are
-already implemented in calibrate.py, so nothing is blocked on this.
+The cause is that RANSAC settles on a different grid each time, and several
+pitches fit the candidates about equally well, since Hough finds points between
+bolt holes as well as on them. The residual does flag the worse fit, and
+plausibility catches the impossible camera distance, so the ingredients for
+choosing between runs exist; they are just not yet used. Until they are,
+calibrate.py with four tapped corners is the path that gives a trustworthy
+answer.
+
+An affine version of this failed for a long time: one basis cannot describe a
+grid across a whole frame, and growing from a seed died at three holes because
+RANSAC kept accepting bases that merely connected a few points by coincidence.
+Fitting the homography directly is what fixed it.
 """
 
 import subprocess
@@ -35,7 +44,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-from lattice import grow, hough_circles
+from lattice import hough_circles
 from wall import homography, intrinsics, plane_from_homography, wall_angle
 
 
@@ -67,38 +76,72 @@ def hold_mask(image_path, img, conf=0.15):
     return np.array(m.filter(ImageFilter.MaxFilter(21))) > 0
 
 
-def local_basis(points, centre, size=500.0, iters=30000, seed=0):
-    """Fit a lattice where perspective is near-uniform.
+def grid_score(H, pts, tol=0.25):
+    """How many DISTINCT grid cells the candidates occupy under H.
 
-    Inlier fraction rises sharply as the window shrinks (17% over 2600 px, 65%
-    over 500) because one affine basis cannot describe a projective grid. So fit
-    small and let grow() carry it across the frame.
+    Counting matched points instead lets a degenerate homography win by
+    collapsing the plane: an early version scored 62 "inliers" that turned out
+    to sit on 7 cells, because everything lands near an integer once the plane
+    is crushed. Distinct cells removes the incentive.
+    """
+    from wall import to_wall_metres
+
+    try:
+        g = to_wall_metres(H, pts)
+    except np.linalg.LinAlgError:
+        return 0, None
+    off = np.abs(g - np.round(g)).max(axis=1)
+    ok = (off < tol) & (np.abs(g) < 40).all(axis=1)
+    if ok.sum() < 6:
+        return 0, None
+    return len(np.unique(np.round(g[ok]), axis=0)), ok
+
+
+def fit_grid(pts, iters=150000, seed=1):
+    """Projective RANSAC: sample four candidates as grid corners, fit, score.
+
+    Projective rather than affine because a single basis cannot describe a grid
+    across a whole frame; inlier fraction climbs from 17% over 2600 px to 65%
+    over 500 as the window shrinks. Fitting the homography directly sidesteps
+    that instead of fighting it.
     """
     rng = np.random.default_rng(seed)
-    sel = points[(np.abs(points[:, 0] - centre[0]) < size / 2) &
-                 (np.abs(points[:, 1] - centre[1]) < size / 2)]
-    if len(sel) < 8:
-        return None
     best = (0, None)
     for _ in range(iters):
-        i, j, k = rng.choice(len(sel), 3, replace=False)
-        a, b = sel[j] - sel[i], sel[k] - sel[i]
-        la, lb = np.hypot(*a), np.hypot(*b)
-        if not (40 < la < 110 and 40 < lb < 110):
+        quad = pts[rng.choice(len(pts), 4, replace=False)]
+        c = quad.mean(axis=0)
+        tl = quad[np.argmin((quad[:, 0] - c[0]) + (quad[:, 1] - c[1]))]
+        br = quad[np.argmax((quad[:, 0] - c[0]) + (quad[:, 1] - c[1]))]
+        tr = quad[np.argmax((quad[:, 0] - c[0]) - (quad[:, 1] - c[1]))]
+        bl = quad[np.argmin((quad[:, 0] - c[0]) - (quad[:, 1] - c[1]))]
+        o = np.array([tl, tr, bl, br])
+        if len({tuple(p) for p in o}) != 4:
             continue
-        if abs(a[0] * b[1] - a[1] * b[0]) < 0.45 * la * lb:
+        top, left = np.hypot(*(tr - tl)), np.hypot(*(bl - tl))
+        bot, right = np.hypot(*(br - bl)), np.hypot(*(br - tr))
+        if min(top, left, bot, right) < 300:
             continue
-        try:
-            co = np.linalg.lstsq(np.column_stack([a, b]), (sel - sel[i]).T, rcond=None)[0].T
-        except np.linalg.LinAlgError:
+        # Reject collapsed quads: opposite edges of a real grid block stay
+        # comparable, and a near-triangle otherwise scores well by accident.
+        if max(top, bot) / max(min(top, bot), 1) > 1.8:
             continue
-        ok = (np.abs(co - np.round(co)).max(axis=1) < 0.20).sum()
-        if ok > best[0]:
-            best = (int(ok), (sel[i], a, b))
-    return best[1] if best[0] >= 6 else None
+        if max(left, right) / max(min(left, right), 1) > 1.8:
+            continue
+        for n in (4, 5, 6, 8, 10, 12):
+            for m in (4, 5, 6, 8, 10, 12):
+                if not (55 < top / n < 115 and 55 < left / m < 115):
+                    continue
+                H = homography(np.array([[0., m], [n, m], [0., 0.], [n, 0.]]), o)
+                s, ok = grid_score(H, pts)
+                if s > best[0]:
+                    best = (s, (H, ok))
+    return best[1]
 
 
-def measure(image_path, focal_35mm=None):
+def measure(image_path, focal_35mm=None, spacing_m=0.1524):
+    """Recover a wall's grid, angle and scale from one photo."""
+    from wall import to_wall_metres
+
     img = Image.open(image_path)
     gray = np.array(img.convert("L"), dtype=float)
     masked = hold_mask(image_path, img)
@@ -108,45 +151,54 @@ def measure(image_path, focal_35mm=None):
     if len(pts) < 20:
         return {"error": f"only {len(pts)} bolt-hole candidates"}
 
-    # Start where the candidates are densest: that is bare, well-lit panel.
-    grid = 400
-    cells = {}
-    for p in pts:
-        cells.setdefault((int(p[0] // grid), int(p[1] // grid)), []).append(p)
-    centre = np.mean(max(cells.values(), key=len), axis=0)
+    fit = fit_grid(pts)
+    if fit is None:
+        return {"error": "no consistent grid"}
+    H0, ok = fit
+    good = pts[ok]
+    cells = np.round(to_wall_metres(H0, good))
+    _, idx = np.unique(cells, axis=0, return_index=True)
+    good, cells = good[idx], cells[idx]
+    if len(good) < 12:
+        return {"error": f"grid covers only {len(good)} holes"}
 
-    basis = local_basis(pts, centre)
-    if basis is None:
-        return {"error": "no consistent lattice near the densest region"}
-    origin, a, b = basis
-    seed = int(np.argmin(np.hypot(*(pts - origin).T)))
-    confirmed, missing = grow(pts, seed, a, b)
-    if len(confirmed) < 8:
-        return {"error": f"lattice grew to only {len(confirmed)} holes"}
+    # Half-pitch, because Hough finds points between bolt holes as well as on
+    # them. This factor is guessed rather than determined, which is a large part
+    # of why runs disagree: several pitches fit the candidates about equally
+    # well and nothing here yet picks between them.
+    Hm = homography(cells * spacing_m * 0.5, good)
+    resid = np.hypot(*(to_wall_metres(homography(cells, good), good) - cells).T)
 
-    cell_xy = np.array(list(confirmed.keys()), dtype=float)   # hole units, not metres
-    img_xy = np.array(list(confirmed.values()), dtype=float)
-    H = homography(cell_xy, img_xy)
+    mid = good.mean(axis=0)
+    mpp = float(np.linalg.norm(to_wall_metres(Hm, [mid + [50., 0.]])[0]
+                               - to_wall_metres(Hm, [mid])[0]) / 50.0)
+    out = {"holes": len(good), "residual_holes": float(np.median(resid)),
+           "metres_per_pixel": mpp, "H": Hm.tolist(),
+           "image_size": list(img.size), "spacing_m": spacing_m}
 
-    out = {"candidates": len(pts), "grid_holes": len(confirmed), "occluded": len(missing),
-           "basis_px": (float(np.hypot(*a)), float(np.hypot(*b)))}
     focal_35mm = focal_35mm or focal_from_heic(image_path)
     if focal_35mm:
         f_px = (float(focal_35mm) / 36.0) * max(img.size)
-        R, _ = plane_from_homography(H, intrinsics(f_px, img.width, img.height))
-        out["focal_35mm"] = focal_35mm
-        out["wall_angle_deg"] = wall_angle(R)
+        R, t = plane_from_homography(Hm, intrinsics(f_px, img.width, img.height))
+        out["focal_px"] = f_px
+        out["wall_angle_deg"] = wall_angle(R)      # scale-invariant
+        out["camera_distance_m"] = float(np.linalg.norm(t))
     return out
 
 
 if __name__ == "__main__":
+    import json
+
     for path in sys.argv[1:]:
         r = measure(path)
         name = Path(path).name
         if "error" in r:
             print(f"{name}: {r['error']}")
-        else:
-            ang = r.get("wall_angle_deg")
-            print(f"{name}: {r['grid_holes']} holes on the grid from {r['candidates']} candidates, "
-                  f"{r['occluded']} occluded"
-                  + (f", wall {ang:+.1f} deg" if ang is not None else " (no focal length, no angle)"))
+            continue
+        ang = r.get("wall_angle_deg")
+        print(f"{name}: {r['holes']} holes, residual {r['residual_holes']:.3f} holes, "
+              f"{r['metres_per_pixel']*1000:.2f} mm/px"
+              + (f", wall {ang:+.1f} deg, camera {r['camera_distance_m']:.2f} m" if ang is not None else ""))
+        dst = Path(path).with_suffix(".calib.json")
+        dst.write_text(json.dumps(r, indent=2))
+        print(f"  -> {dst}")

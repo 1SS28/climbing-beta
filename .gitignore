@@ -8,3 +8,4 @@ runs_v1.log
 *.pt
 runs_full.log
 runs_960.log
+!data/**/*.calib.json
