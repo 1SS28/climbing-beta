@@ -12,24 +12,24 @@ on gradient direction, fit a lattice in a small window where perspective is
 near-uniform, grow it outward refitting a homography as it goes, then decompose
 that homography with the focal length from EXIF.
 
-STATUS: produces plausible-looking numbers that are not yet repeatable. Do not
-trust its output.
+STATUS: repeatable, and the scale is self-consistent. The angle is measured
+relative to the camera rather than to gravity, so treat it as unverified.
 
-One run on IMG_3495 found 53 holes with a 0.06-hole residual, giving 1.12 mm/px
-and a camera 4.28 m away, which agrees with the climber measured at 3.50 m in
-the same frame. A later run on the same photo found 81 holes with a 0.19-hole
-residual, 0.52 mm/px and a camera at 2.67 m: nearer than the climber standing
-in front of the wall, which is impossible. The wall angle moved from +11.9 to
-+1.9 degrees between those runs, and IMG_3497, an overhang, came back at -15.9,
-i.e. leaning away.
+Runs used to disagree because each took whatever one random RANSAC fit
+returned: the same photo gave 1.12 mm/px on one run and 0.52 on the next, with
+the camera at 4.28 m and then at 2.67 m, the latter nearer than a climber
+standing in front of the wall. Now restarts use fixed seeds and the winner is
+the lowest-residual grid whose geometry is physically possible, so the same
+photo gives the same answer.
 
-The cause is that RANSAC settles on a different grid each time, and several
-pitches fit the candidates about equally well, since Hough finds points between
-bolt holes as well as on them. The residual does flag the worse fit, and
-plausibility catches the impossible camera distance, so the ingredients for
-choosing between runs exist; they are just not yet used. Until they are,
-calibrate.py with four tapped corners is the path that gives a trustworthy
-answer.
+The two checks do different jobs, which is what earlier versions conflated. The
+residual is in hole units and so is independent of pitch: it says which grid
+fit is real. Plausibility says which pitch that grid corresponds to, because a
+wrong pitch fits perfectly and merely puts the camera somewhere impossible.
+
+What remains unverified is the angle, for a reason no amount of fitting can
+address: see wall_angle in wall.py. It is measured against the camera, and a
+photo carries no gravity vector.
 
 An affine version of this failed for a long time: one basis cannot describe a
 grid across a whole frame, and growing from a seed died at three holes because
@@ -45,6 +45,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 from lattice import hough_circles
+from scene import MAX_WALL_M
 from wall import homography, intrinsics, plane_from_homography, wall_angle
 
 
@@ -138,10 +139,65 @@ def fit_grid(pts, iters=150000, seed=1):
     return best[1]
 
 
-def measure(image_path, focal_35mm=None, spacing_m=0.1524):
-    """Recover a wall's grid, angle and scale from one photo."""
+def refit(pts, H0, spacing_m, pitch):
+    """Refit the homography over every inlier, and report how well it fits.
+
+    The residual is in hole units and so does not depend on the pitch guess,
+    which is what lets it choose between grid fits while plausibility chooses
+    the pitch. Conflating those two jobs is why earlier runs disagreed.
+    """
     from wall import to_wall_metres
 
+    cells = np.round(to_wall_metres(H0, pts))
+    _, idx = np.unique(cells, axis=0, return_index=True)
+    good, cells = pts[idx], cells[idx]
+    if len(good) < 12:
+        return None
+    H_cells = homography(cells, good)
+    resid = float(np.median(np.hypot(*(to_wall_metres(H_cells, good) - cells).T)))
+    H_m = homography(cells * spacing_m * pitch, good)
+    return {"H": H_m, "cells": cells, "pts": good, "residual_holes": resid}
+
+
+def plausible_wall(H_m, img_size, focal_px):
+    """Reject geometry a bouldering gym cannot produce.
+
+    A wrong pitch shows up here rather than in the residual: the grid still fits
+    perfectly, it is merely the wrong size, so the camera ends up somewhere
+    impossible. One earlier run put the camera 2.67 m away on a wall
+    photographed from behind a climber standing at 3.50 m.
+    """
+    from wall import to_wall_metres
+
+    w, h = img_size
+    R, t = plane_from_homography(H_m, intrinsics(focal_px, w, h))
+    mid = np.array([w / 2.0, h / 2.0])
+    mpp = float(np.linalg.norm(to_wall_metres(H_m, [mid + [50.0, 0.0]])[0]
+                               - to_wall_metres(H_m, [mid])[0]) / 50.0)
+    # Distance where the scale was taken, not to the grid's origin corner. On a
+    # tilted wall those differ, and quoting one with the other invites a
+    # cross-check that fails for no real reason. Metres per pixel at distance D
+    # is D / focal, so the two are the same measurement.
+    dist = mpp * focal_px
+    frame_m = mpp * h
+    # A 24mm-equivalent lens at distance D spans about 1.5*D vertically, so a
+    # frame much taller than that means the scale is wrong rather than the room
+    # being large.
+    ok = (2.0 <= dist <= 12.0) and (1.5 <= frame_m <= MAX_WALL_M * 2.5) \
+        and (frame_m <= 2.2 * dist)
+    return ok, {"camera_distance_m": dist, "metres_per_pixel": mpp,
+                "frame_span_m": frame_m, "wall_angle_deg": wall_angle(R)}
+
+
+def measure(image_path, focal_35mm=None, spacing_m=0.1524, restarts=8, iters=25000):
+    """Recover a wall's grid, angle and scale from one photo.
+
+    Deterministic: the restarts use fixed seeds, so the same photo gives the
+    same answer. Each restart proposes a grid; the lowest-residual grid whose
+    geometry is physically possible wins. Earlier versions took whatever one
+    random fit returned, which is why the same photo gave 1.12 mm/px on one run
+    and 0.52 on the next.
+    """
     img = Image.open(image_path)
     gray = np.array(img.convert("L"), dtype=float)
     masked = hold_mask(image_path, img)
@@ -151,38 +207,50 @@ def measure(image_path, focal_35mm=None, spacing_m=0.1524):
     if len(pts) < 20:
         return {"error": f"only {len(pts)} bolt-hole candidates"}
 
-    fit = fit_grid(pts)
-    if fit is None:
-        return {"error": "no consistent grid"}
-    H0, ok = fit
-    good = pts[ok]
-    cells = np.round(to_wall_metres(H0, good))
-    _, idx = np.unique(cells, axis=0, return_index=True)
-    good, cells = good[idx], cells[idx]
-    if len(good) < 12:
-        return {"error": f"grid covers only {len(good)} holes"}
-
-    # Half-pitch, because Hough finds points between bolt holes as well as on
-    # them. This factor is guessed rather than determined, which is a large part
-    # of why runs disagree: several pitches fit the candidates about equally
-    # well and nothing here yet picks between them.
-    Hm = homography(cells * spacing_m * 0.5, good)
-    resid = np.hypot(*(to_wall_metres(homography(cells, good), good) - cells).T)
-
-    mid = good.mean(axis=0)
-    mpp = float(np.linalg.norm(to_wall_metres(Hm, [mid + [50., 0.]])[0]
-                               - to_wall_metres(Hm, [mid])[0]) / 50.0)
-    out = {"holes": len(good), "residual_holes": float(np.median(resid)),
-           "metres_per_pixel": mpp, "H": Hm.tolist(),
-           "image_size": list(img.size), "spacing_m": spacing_m}
-
     focal_35mm = focal_35mm or focal_from_heic(image_path)
-    if focal_35mm:
-        f_px = (float(focal_35mm) / 36.0) * max(img.size)
-        R, t = plane_from_homography(Hm, intrinsics(f_px, img.width, img.height))
+    f_px = (float(focal_35mm) / 36.0) * max(img.size) if focal_35mm else None
+
+    # Hough finds points between bolt holes as well as on them, so the detected
+    # lattice can sit at a fraction of the true pitch. Try the candidates rather
+    # than assume one.
+    PITCHES = (1.0, 0.5, 0.25)
+    tried, best = [], None
+    for seed in range(restarts):
+        fit = fit_grid(pts, iters=iters, seed=seed)
+        if fit is None:
+            continue
+        H0, ok = fit
+        for pitch in PITCHES:
+            r = refit(pts[ok], H0, spacing_m, pitch)
+            if r is None:
+                continue
+            if f_px is None:
+                cand = dict(r, pitch=pitch, plausible=True)
+            else:
+                good, geo = plausible_wall(r["H"], img.size, f_px)
+                cand = dict(r, pitch=pitch, plausible=good, **geo)
+            tried.append((cand["residual_holes"], pitch, len(r["pts"]), cand["plausible"]))
+            if not cand["plausible"]:
+                continue
+            # Lowest residual wins; more holes breaks a tie.
+            key = (cand["residual_holes"], -len(cand["pts"]))
+            if best is None or key < (best["residual_holes"], -len(best["pts"])):
+                best = cand
+
+    if best is None:
+        near = sorted(tried)[:3]
+        return {"error": "no physically plausible grid",
+                "rejected": [{"residual_holes": round(r, 3), "pitch": p, "holes": n} for r, p, n, _ in near]}
+
+    out = {"holes": len(best["pts"]), "residual_holes": best["residual_holes"],
+           "pitch_of_true_spacing": best["pitch"], "spacing_m": spacing_m,
+           "H": best["H"].tolist(), "image_size": list(img.size),
+           "restarts": restarts, "candidates_considered": len(tried)}
+    for k in ("metres_per_pixel", "wall_angle_deg", "camera_distance_m", "frame_span_m"):
+        if k in best:
+            out[k] = best[k]
+    if f_px:
         out["focal_px"] = f_px
-        out["wall_angle_deg"] = wall_angle(R)      # scale-invariant
-        out["camera_distance_m"] = float(np.linalg.norm(t))
     return out
 
 
@@ -194,11 +262,15 @@ if __name__ == "__main__":
         name = Path(path).name
         if "error" in r:
             print(f"{name}: {r['error']}")
+            for rej in r.get("rejected", []):
+                print(f"    closest rejected: residual {rej['residual_holes']} at pitch "
+                      f"{rej['pitch']}, {rej['holes']} holes")
             continue
         ang = r.get("wall_angle_deg")
-        print(f"{name}: {r['holes']} holes, residual {r['residual_holes']:.3f} holes, "
-              f"{r['metres_per_pixel']*1000:.2f} mm/px"
-              + (f", wall {ang:+.1f} deg, camera {r['camera_distance_m']:.2f} m" if ang is not None else ""))
+        print(f"{name}: {r['holes']} holes, residual {r['residual_holes']:.3f}, "
+              f"pitch x{r['pitch_of_true_spacing']}, {r['metres_per_pixel']*1000:.2f} mm/px"
+              + (f", wall {ang:+.1f} deg, camera {r['camera_distance_m']:.2f} m, "
+                 f"frame {r['frame_span_m']:.1f} m" if ang is not None else ""))
         dst = Path(path).with_suffix(".calib.json")
         dst.write_text(json.dumps(r, indent=2))
         print(f"  -> {dst}")
