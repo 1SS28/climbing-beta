@@ -28,12 +28,15 @@ from PIL import Image, ImageDraw, ImageFilter
 from colour import srgb_to_lab
 
 
-def hold_mask(img, polys, dilate=31):
+def hold_mask(img, polys, dilate=11):
     """Pixels belonging to detected holds, generously grown.
 
     Segmentation masks sit slightly inside a hold's true edge, leaving a rim of
-    the hold's own colour outside the mask. At 9 px of dilation those rims were
-    the main false positive, since a saturated hold leaves a saturated arc.
+    the hold's own colour outside the mask, and those rims were the main false
+    positive. The uniformity test in saturated_blobs now rejects them on their
+    own merits, so this stays modest: tape sits right beside its hold, and a
+    wide dilation would mask the very thing being looked for. Measured, it makes
+    little odds either way, 9 tapes at 5 px against 8 at 31.
     """
     m = Image.new("L", img.size, 0)
     d = ImageDraw.Draw(m)
