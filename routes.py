@@ -29,10 +29,25 @@ def chain_fraction(points, reach):
     return best / len(points)
 
 
-def score(points, lab, image_height, min_holds=5):
+def framing(points, image_width, image_height, margin=0.04):
+    """Fraction of the group sitting comfortably inside the frame.
+
+    Holds at the border are usually cut off, so their masks are truncated and
+    their centroids and sizes are wrong. A route running up the edge of the
+    photograph is also not one anybody climbs in that photograph. On a real gym
+    wall the search picked exactly such a group, half out of shot, and produced
+    beta along the frame's left margin.
+    """
+    mx, my = margin * image_width, margin * image_height
+    inside = ((points[:, 0] > mx) & (points[:, 0] < image_width - mx) &
+              (points[:, 1] > my) & (points[:, 1] < image_height - my))
+    return float(inside.mean())
+
+
+def score(points, lab, image_height, min_holds=5, image_width=None):
     """How route-like a colour group is. Zero means it is not one.
 
-    Three signals multiplied, so failing any one disqualifies the group.
+    Signals multiplied, so failing any one disqualifies the group.
     """
     n = len(points)
     if n < min_holds:
@@ -43,14 +58,15 @@ def score(points, lab, image_height, min_holds=5):
     chroma = float(np.hypot(lab[1], lab[2]))
     # Greys sit near zero chroma. Saturated so a strong colour cannot dominate.
     colourful = min(chroma / 30.0, 1.0)
+    frame = 1.0 if image_width is None else framing(points, image_width, image_height)
 
-    return float(rise * chain * colourful)
+    return float(rise * chain * colourful * frame)
 
 
-def best_group(points_by_group, labs, image_height):
+def best_group(points_by_group, labs, image_height, image_width=None):
     """(group index, score) of the most route-like group, or (None, 0)."""
     scored = [
-        (g, score(np.asarray(p), labs[g], image_height))
+        (g, score(np.asarray(p), labs[g], image_height, image_width=image_width))
         for g, p in points_by_group.items()
     ]
     scored = [s for s in scored if s[1] > 0]

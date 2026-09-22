@@ -51,7 +51,7 @@ for n, f in enumerate(files):
         labels = colour_group(cols, 15.0)
         by_group = {g: pts[labels == g] for g in range(labels.max() + 1)}
         centroids = {g: np.array(cols)[labels == g].mean(axis=0) for g in by_group}
-        g, s = best_group(by_group, centroids, img.height)
+        g, s = best_group(by_group, centroids, img.height, img.width)
         if g is not None:
             rows.append((s, f.name, g, int((labels == g).sum()), len(pts)))
     except Exception as exc:

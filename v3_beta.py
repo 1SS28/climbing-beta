@@ -58,7 +58,7 @@ else:
     centres = np.array([np.asarray(p).mean(axis=0) for p in polys])
     by_group = {g: centres[labels == g] for g in range(len(sizes))}
     centroids = {g: np.array(colours)[labels == g].mean(axis=0) for g in by_group}
-    pick, sc = best_group(by_group, centroids, img.height)
+    pick, sc = best_group(by_group, centroids, img.height, img.width)
     if pick is None:
         print("no group looks like a route: nothing rises, chains and is saturated")
         sys.exit(1)

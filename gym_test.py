@@ -67,7 +67,7 @@ for path in photos:
     centres = np.array([np.asarray(p).mean(axis=0) for p in polys])
     by_group = {g: centres[labels == g] for g in range(labels.max() + 1)}
     centroids = {g: np.array(colours)[labels == g].mean(axis=0) for g in by_group}
-    pick, sc = best_group(by_group, centroids, img.height)
+    pick, sc = best_group(by_group, centroids, img.height, img.width)
 
     # Scale the overlay to the source resolution: a phone photo is ~5700 px
     # wide, and a fixed line width vanishes once the image is shrunk to view.
