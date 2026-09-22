@@ -28,8 +28,13 @@ from PIL import Image, ImageDraw, ImageFilter
 from colour import srgb_to_lab
 
 
-def hold_mask(img, polys, dilate=9):
-    """Pixels belonging to detected holds, slightly grown."""
+def hold_mask(img, polys, dilate=31):
+    """Pixels belonging to detected holds, generously grown.
+
+    Segmentation masks sit slightly inside a hold's true edge, leaving a rim of
+    the hold's own colour outside the mask. At 9 px of dilation those rims were
+    the main false positive, since a saturated hold leaves a saturated arc.
+    """
     m = Image.new("L", img.size, 0)
     d = ImageDraw.Draw(m)
     for poly in polys:
@@ -38,10 +43,28 @@ def hold_mask(img, polys, dilate=9):
     return np.array(m.filter(ImageFilter.MaxFilter(dilate))) > 0
 
 
-def saturated_blobs(img, holds, min_chroma=28.0, min_px=40, max_frac=0.0006, stride=1):
-    """Connected runs of strongly coloured pixels that are not holds.
+def saturated_blobs(img, holds, min_chroma=50.0, min_px=80, max_frac=0.0006,
+                    max_spread=14.0, stride=1):
+    """Connected runs of strongly, uniformly coloured pixels that are not holds.
 
-    Two-pass labelling by row runs, since scipy is not a dependency here.
+    Two thresholds matter and one of them was wrong before. Route tape is more
+    saturated than almost anything else on a wall: measured on the pink markers
+    here, chroma runs about 67, and only above chroma 60 does the colour become
+    uniform, with interquartile spread of 3 in both a and b. Below that the
+    region is a mixture, picking up purple holds along with the tape, and the
+    spread jumps to about 70.
+
+    So uniformity is the discriminator, not saturation alone. A strip of tape is
+    one flat colour; a hold rim curves away from the light and shades across its
+    width, which widens the spread even when it is bright.
+
+    Thresholds were swept against this wall. At chroma 50 it returns 8 strips in
+    three clean colours, pink, blue and yellow, matching what is visible. Drop
+    to 40 and recall rises to 16 but six of those land on a green wall sign well
+    off the climbing wall, which would invent a route. Raise to 55 and only 5
+    survive, too few of any one colour to define a route at all. Elongation
+    carries some of the load as well: tape is a thin strip, while sign lettering
+    is blockier.
     """
     rgb = np.array(img.convert("RGB"))
     h, w = rgb.shape[:2]
@@ -109,9 +132,15 @@ def saturated_blobs(img, holds, min_chroma=28.0, min_px=40, max_frac=0.0006, str
         if elong < 1.8 or fill < 0.45:
             continue
         px = rgb[ys, xs]
+        plab = srgb_to_lab(px)
+        spread = float(max(np.percentile(plab[:, 1], 75) - np.percentile(plab[:, 1], 25),
+                           np.percentile(plab[:, 2], 75) - np.percentile(plab[:, 2], 25)))
+        if spread > max_spread:
+            continue                       # a mixture, so not one strip of tape
         out.append({"centre": np.array([xs.mean(), ys.mean()]),
-                    "colour": np.median(srgb_to_lab(px), axis=0),
-                    "pixels": int(len(ys)), "elongation": float(elong)})
+                    "colour": np.median(plab, axis=0),
+                    "pixels": int(len(ys)), "elongation": float(elong),
+                    "spread": spread})
     return out
 
 
