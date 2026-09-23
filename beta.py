@@ -157,17 +157,24 @@ def eligible(holds, hands=None, feet=None):
 
 
 def find_start(holds, c=Climber(), hands=None, feet=None):
-    """Lowest stance the body fits into. Start markings are not detectable, so
-    the convention is to start as low as possible."""
+    """Feet low, hands as high as the body allows.
+
+    Not the lowest stance overall, which is what this used to return and which
+    is nearly immobile. On a real wall that gave a crouch with a hand and a foot
+    sharing a hold at ankle height: 18 stances were reachable from it, the
+    highest hand got 1.59 m up a 4.13 m wall, and 81 holds sat above that. A
+    climber pulls on with hands high and feet low, and starting that way leaves
+    the search somewhere to go.
+    """
     hand_ok, foot_ok = eligible(holds, hands, feet)
-    by_height = lambda s: sorted(s, key=lambda i: holds[i].y)  # noqa: E731
-    hs, fs = by_height(hand_ok), by_height(foot_ok)
-    for fi in range(len(fs)):
-        for fj in range(fi + 1, len(fs)):
-            ft = sorted((fs[fi], fs[fj]), key=lambda i: holds[i].x)
-            for hi in range(len(hs)):
-                for hj in range(hi + 1, len(hs)):
-                    hd = sorted((hs[hi], hs[hj]), key=lambda i: holds[i].x)
+    low = sorted(foot_ok, key=lambda i: holds[i].y)
+    high = sorted(hand_ok, key=lambda i: -holds[i].y)
+    for fi in range(len(low)):
+        for fj in range(fi + 1, len(low)):
+            ft = sorted((low[fi], low[fj]), key=lambda i: holds[i].x)
+            for hi in range(len(high)):
+                for hj in range(hi + 1, len(high)):
+                    hd = sorted((high[hi], high[hj]), key=lambda i: holds[i].x)
                     stance = (hd[0], hd[1], ft[0], ft[1])
                     if feasible(stance, holds, c):
                         return stance
