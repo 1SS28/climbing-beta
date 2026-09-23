@@ -9,3 +9,4 @@ runs_v1.log
 runs_full.log
 runs_960.log
 !data/**/*.calib.json
+data/uploads/

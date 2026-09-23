@@ -1,0 +1,192 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Climbing Beta</title>
+<style>
+  :root { --bg:#14161a; --panel:#1d2026; --ink:#e8eaed; --dim:#9aa1ab;
+          --line:#2c313a; --accent:#4da3ff; --warn:#ffb454; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex;
+           align-items:baseline; gap:14px; flex-wrap:wrap; }
+  h1 { font-size:16px; margin:0; font-weight:600; }
+  .hint { color:var(--dim); font-size:13px; }
+  main { display:flex; gap:0; height:calc(100vh - 53px); }
+  #stage { flex:1; overflow:auto; background:#0e1013; position:relative; }
+  canvas { display:block; cursor:crosshair; }
+  aside { width:330px; border-left:1px solid var(--line); background:var(--panel);
+          padding:16px; overflow-y:auto; }
+  .step { border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:12px; }
+  .step h2 { font-size:13px; margin:0 0 6px; text-transform:uppercase;
+             letter-spacing:.06em; color:var(--dim); font-weight:600; }
+  button { background:var(--accent); color:#06121f; border:0; border-radius:6px;
+           padding:8px 12px; font-weight:600; cursor:pointer; font-size:13px; }
+  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  button:disabled { opacity:.4; cursor:default; }
+  label { display:block; margin:8px 0 3px; color:var(--dim); font-size:12px; }
+  input { width:100%; padding:6px 8px; background:#12151a; border:1px solid var(--line);
+          border-radius:5px; color:var(--ink); font-size:13px; }
+  .row { display:flex; gap:8px; } .row > * { flex:1; }
+  ol { margin:6px 0 0; padding-left:20px; } li { margin:3px 0; }
+  .dim { color:var(--dim); } .warn { color:var(--warn); }
+  .moves { font-variant-numeric:tabular-nums; }
+</style>
+
+<header>
+  <h1>Climbing Beta</h1>
+  <span class="hint" id="hint">Upload a photo of a wall to begin.</span>
+</header>
+
+<main>
+  <div id="stage"><canvas id="c"></canvas></div>
+  <aside>
+    <div class="step">
+      <h2>1 &middot; Photo</h2>
+      <input type="file" id="file" accept="image/*">
+      <div class="dim" id="detected" style="margin-top:6px"></div>
+    </div>
+
+    <div class="step">
+      <h2>2 &middot; Route</h2>
+      <div class="dim">Click the holds of one route, lowest first.
+      Click again to remove.</div>
+      <div style="margin-top:8px" id="picked" class="dim">none picked</div>
+      <button class="ghost" id="clear" style="margin-top:8px">Clear</button>
+    </div>
+
+    <div class="step">
+      <h2>3 &middot; Scale</h2>
+      <div class="dim">Best: click four bolt holes on one flat panel, far apart,
+      in order top-left, top-right, bottom-left, bottom-right.</div>
+      <button class="ghost" id="calib" style="margin-top:8px">Pick bolt holes</button>
+      <div id="corners" class="dim" style="margin-top:6px">0 of 4</div>
+      <div class="row">
+        <div><label>holes across</label><input id="cols" value="8"></div>
+        <div><label>holes up</label><input id="rows" value="8"></div>
+      </div>
+      <label>spacing between holes (m)</label><input id="spacing" value="0.1524">
+      <label>or, no bolt holes: wall height in frame (m)</label>
+      <input id="wallh" value="4.5">
+    </div>
+
+    <div class="step">
+      <h2>4 &middot; Climber</h2>
+      <label>height (m)</label><input id="height" value="1.68">
+      <button id="go" style="margin-top:10px; width:100%" disabled>Find beta</button>
+    </div>
+
+    <div class="step" id="out" style="display:none">
+      <h2>Beta</h2>
+      <div id="result"></div>
+    </div>
+  </aside>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const cv = $('#c'), ctx = cv.getContext('2d');
+let img = null, data = null, route = [], corners = [], mode = 'route';
+
+function draw() {
+  if (!img) return;
+  ctx.drawImage(img, 0, 0);
+  const k = Math.max(1, img.width / 900);
+  for (const h of data.holds) {
+    const i = route.indexOf(h.id);
+    ctx.strokeStyle = i >= 0 ? '#4da3ff' : 'rgba(255,255,255,.22)';
+    ctx.lineWidth = (i >= 0 ? 4 : 1.4) * k;
+    ctx.beginPath();
+    h.points.forEach(([x, y], n) => n ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+    ctx.closePath(); ctx.stroke();
+    if (i >= 0) {
+      ctx.fillStyle = '#4da3ff'; ctx.font = `${16*k}px sans-serif`;
+      ctx.fillText(i + 1, h.centre[0] + 10*k, h.centre[1] - 10*k);
+    }
+  }
+  corners.forEach(([x, y], n) => {
+    ctx.strokeStyle = '#ffb454'; ctx.lineWidth = 3 * k;
+    ctx.beginPath(); ctx.arc(x, y, 11*k, 0, 7); ctx.stroke();
+    ctx.fillStyle = '#ffb454'; ctx.font = `${14*k}px sans-serif`;
+    ctx.fillText('TL TR BL BR'.split(' ')[n], x + 14*k, y - 8*k);
+  });
+  if (window._beta) for (const m of window._beta.moves) {
+    const a = data.holds[m.from].centre, b = data.holds[m.to].centre;
+    ctx.strokeStyle = m.hand ? 'rgba(255,70,70,.9)' : 'rgba(70,170,255,.9)';
+    ctx.lineWidth = 5 * k;
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+  }
+}
+
+cv.onclick = e => {
+  const r = cv.getBoundingClientRect();
+  const x = (e.clientX - r.left) * (cv.width / r.width);
+  const y = (e.clientY - r.top) * (cv.height / r.height);
+  if (mode === 'corners') {
+    if (corners.length < 4) corners.push([x, y]);
+    $('#corners').textContent = `${corners.length} of 4`;
+    if (corners.length === 4) { mode = 'route'; $('#hint').textContent = 'Now click the holds of one route.'; }
+    draw(); return;
+  }
+  let best = -1, bd = 1e9;
+  for (const h of data.holds) {
+    const d = Math.hypot(h.centre[0] - x, h.centre[1] - y);
+    if (d < bd) { bd = d; best = h.id; }
+  }
+  if (bd > 90) return;
+  const i = route.indexOf(best);
+  i >= 0 ? route.splice(i, 1) : route.push(best);
+  $('#picked').textContent = route.length ? `${route.length} holds picked` : 'none picked';
+  $('#go').disabled = route.length < 3;
+  window._beta = null; draw();
+};
+
+$('#file').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  $('#hint').textContent = 'Detecting holds, this takes a few seconds...';
+  const fd = new FormData(); fd.append('file', f);
+  const res = await fetch('/api/photo', { method: 'POST', body: fd });
+  data = await res.json();
+  img = new Image();
+  img.onload = () => { cv.width = img.width; cv.height = img.height;
+                       cv.style.width = Math.min(img.width, 1100) + 'px'; draw(); };
+  img.src = '/api/photo/' + data.id + '.jpg';
+  $('#detected').textContent = `${data.holds.length} holds found`;
+  $('#hint').textContent = 'Click the holds of one route, lowest first.';
+  route = []; corners = []; window._beta = null;
+};
+
+$('#clear').onclick = () => { route = []; window._beta = null;
+  $('#picked').textContent = 'none picked'; $('#go').disabled = true; draw(); };
+$('#calib').onclick = () => { corners = []; mode = 'corners';
+  $('#corners').textContent = '0 of 4';
+  $('#hint').textContent = 'Click four bolt holes: top-left, top-right, bottom-left, bottom-right.'; };
+
+$('#go').onclick = async () => {
+  $('#go').disabled = true; $('#hint').textContent = 'Searching...';
+  const body = { id: data.id, route, height_m: +$('#height').value,
+                 wall_height_m: +$('#wallh').value };
+  if (corners.length === 4) Object.assign(body, { corners, cols: +$('#cols').value,
+                 rows: +$('#rows').value, spacing_m: +$('#spacing').value });
+  const r = await fetch('/api/beta', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const out = await r.json();
+  $('#out').style.display = 'block'; $('#go').disabled = false;
+  $('#hint').textContent = '';
+  if (!out.ok) {
+    window._beta = null; draw();
+    $('#result').innerHTML = `<div class="warn">${out.reason}</div>
+      <div class="dim" style="margin-top:6px">${out.scale}</div>`;
+    return;
+  }
+  window._beta = out; draw();
+  const dropped = out.dropped.length
+    ? `<div class="warn" style="margin-top:6px">${out.dropped.length} picked hold(s) were off the line and ignored</div>` : '';
+  $('#result').innerHTML =
+    `<div>${out.moves.length} moves &middot; cost ${out.cost}</div>
+     <div class="dim">${out.scale}</div>${dropped}
+     <ol class="moves">` +
+    out.moves.map(m => `<li>${m.limb} &rarr; hold ${route.indexOf(m.to) + 1 || '&middot;'}
+      <span class="dim">${m.distance_m} m</span></li>`).join('') + '</ol>';
+};
+</script>
