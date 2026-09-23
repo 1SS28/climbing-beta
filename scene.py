@@ -75,12 +75,19 @@ def scale_from_tnuts(p1, p2, holes_apart=1, spacing_m=0.2032):
     return (spacing_m * holes_apart) / px
 
 
-def plausible(metres_per_pixel, image_height_px, max_wall_m=MAX_WALL_M):
+def plausible(metres_per_pixel, image_height_px, max_wall_m=MAX_WALL_M, holds=None):
     """Sanity-check a scale against what a bouldering wall can be.
 
-    Every scale so far has been a guess that silently decided the geometry, and
-    a wrong one swung route connectivity from 9/10 to 2/10. Cheap to check.
+    Check the span of the holds when they are available, not the frame. A frame
+    contains floor and ceiling, so its span is only loosely bounded and a wrong
+    scale slips through: an automatic calibration of one wall here implied a
+    12.5 m frame, which passed, while placing the holds across 11.4 m of wall,
+    which is impossible. The holds are the wall, so they are what to measure.
     """
+    if holds:
+        ys = [h.y for h in holds]
+        span = max(ys) - min(ys)
+        return 0.8 <= span <= max_wall_m, span
     implied = metres_per_pixel * image_height_px
     return 1.5 <= implied <= max_wall_m * 2.5, implied
 

@@ -25,7 +25,7 @@ from PIL import Image
 
 from beta import Climber, describe, find_start, route_chain, search
 from calibrate import calibrate
-from scene import from_polygons, from_wall_plane
+from scene import MAX_WALL_M, from_polygons, from_wall_plane, plausible
 from wall import to_wall_metres
 
 UPLOADS = Path("data/uploads")
@@ -90,6 +90,14 @@ async def beta(payload: dict):
         wall_m = float(payload.get("wall_height_m", 4.5))
         holds = from_polygons(polys, H, wall_m / H)
         scale_note = f"assuming {wall_m:.1f} m across the frame"
+
+    ok, span = plausible(None, H, holds=holds)
+    if not ok:
+        return JSONResponse({"ok": False, "scale": scale_note,
+                             "reason": f"that scale puts the holds across {span:.1f} m of wall, "
+                                       f"which is not a boulder (limit {MAX_WALL_M:.0f} m). "
+                                       f"Check the hole spacing or the wall height."},
+                            status_code=200)
 
     chain, why = route_chain(holds, route, climber)
     if chain is None:
