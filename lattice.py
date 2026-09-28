@@ -223,3 +223,41 @@ def hough_circles(gray, radii=(6, 7, 8, 9), grad_min=18.0, vote_min=0.45):
             peak = np.maximum(peak, np.roll(tmp, dx, 1))
     hits = np.argwhere((best_acc >= peak) & (best_acc > vote_min))
     return hits[:, ::-1].astype(float), best_acc[hits[:, 0], hits[:, 1]]
+
+
+def confirm_grid(gray, H, cells_x=(-12, 12), cells_y=(-12, 12), radius=7, depth=18.0):
+    """Check a fitted grid against the image: do the predicted holes exist?
+
+    The complement of scoring by inliers, and the more informative half. A grid
+    at twice the true pitch still explains every detected hole perfectly, since
+    every real hole sits on it; it simply also predicts a hole halfway between
+    each pair, where there is bare wall. Fitting to detections cannot see that.
+    Asking whether each predicted position has something dark at it can.
+
+    Returns (confirmed fraction, predicted count). The depth threshold is
+    calibrated against holes found by hough_circles: at 18 it fires on 61% of
+    real holes and 12% of random points on the same wall, about five to one. A
+    lower bar is useless here. At 6 it takes 82% of holes but also 38% of random
+    points, and every grid then scores alike regardless of pitch, which is what
+    made a first attempt at this look like it did not work.
+    """
+    from wall import to_wall_metres
+
+    h, w = gray.shape
+    smooth = box_mean(gray, 8)
+    context = box_mean(gray, 26)
+    hits = total = 0
+    for gx in range(cells_x[0], cells_x[1] + 1):
+        for gy in range(cells_y[0], cells_y[1] + 1):
+            q = np.array([gx, gy, 1.0]) @ H.T
+            if abs(q[2]) < 1e-9:
+                continue
+            x, y = q[0] / q[2], q[1] / q[2]
+            if not (radius < x < w - radius and radius < y < h - radius):
+                continue
+            total += 1
+            xi, yi = int(x), int(y)
+            patch = smooth[yi - radius:yi + radius + 1, xi - radius:xi + radius + 1]
+            if patch.size and (context[yi, xi] - patch.min()) > depth:
+                hits += 1
+    return (hits / total if total else 0.0), total
