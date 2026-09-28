@@ -2,7 +2,7 @@
 # Full V1 run, sized to finish overnight rather than to be maximal.
 #
 # Measured: nano @ 640 is ~2.5 min/epoch on this M5 Pro. YOLO11s @ 960 is ~8x
-# that (3.5x params, 2.25x pixels), which is ~16 hours for 60 epochs — far too
+# that (3.5x params, 2.25x pixels), which is ~16 hours for 60 epochs, far too
 # long. 768px for 30 epochs lands near 5 hours, and patience=15 can end it
 # sooner. Resolution is kept above 640 deliberately: gym holds are small and
 # dense, so pixels matter more here than model capacity.

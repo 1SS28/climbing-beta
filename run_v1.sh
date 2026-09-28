@@ -5,7 +5,7 @@
 #
 # Everything after the install runs through .venv/bin/python rather than
 # `uv run`. `uv run` re-syncs the environment and takes .venv/.lock, which
-# deadlocks against any other uv process — that is what stalled the first
+# deadlocks against any other uv process. That is what stalled the first
 # attempt: the multi-hour download held the lock and every other stage queued
 # behind it forever.
 set -o pipefail
