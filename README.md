@@ -178,5 +178,6 @@ a long download.
 
 ## Licence
 
-Not yet chosen. Dependency terms that apply once this is published or shipped
-are in THIRD_PARTY.md, and they decide what the options are.
+AGPL-3.0, see LICENSE. This project imports Ultralytics, which is AGPL-3.0, so
+anything built on it and distributed has to be AGPL too. Details and the
+dataset terms are in THIRD_PARTY.md.

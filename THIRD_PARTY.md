@@ -11,12 +11,15 @@ import `ultralytics`. AGPL-3.0 is a strong copyleft licence: distributing a
 work that builds on it, or offering it as a network service, can oblige you to
 release the whole of that work under AGPL-3.0 as well.
 
-Publishing the source, or shipping it as an app or hosted service, means one
-of:
+This repo takes the third option below. Publishing the source, or shipping it
+as an app or hosted service, means one of:
 
 - buying an Ultralytics commercial licence, or
 - retraining on a permissively licensed architecture, or
-- releasing this project under AGPL-3.0.
+- releasing this project under AGPL-3.0. <- this one, see LICENSE
+
+Going commercial later means revisiting this, since AGPL and the non-commercial
+dataset both bite at that point.
 
 ## ClimbInst - CC BY-NC-SA 4.0
 
