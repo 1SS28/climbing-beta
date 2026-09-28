@@ -124,6 +124,48 @@ async def beta(payload: dict):
             "moves": moves}
 
 
+@app.post("/api/measure")
+async def measure(payload: dict):
+    """Distances between picked holds, and the wall they sit on.
+
+    Separate from /api/beta on purpose. This part can be checked with a tape
+    measure, so it either agrees with reality or it does not, which is more
+    than can be said for a proposed sequence of moves.
+    """
+    pid = payload.get("id")
+    if pid not in _cache:
+        raise HTTPException(404, "unknown photo; upload it again")
+    entry = _cache[pid]
+    polys, (W, H) = entry["polys"], entry["size"]
+
+    corners = payload.get("corners")
+    if corners and len(corners) == 4:
+        cal = calibrate([tuple(c) for c in corners], int(payload["cols"]), int(payload["rows"]),
+                        float(payload.get("spacing_m", 0.1524)), (W, H))
+        holds = from_wall_plane(polys, np.array(cal["H"]))
+        basis = f"bolt grid at {cal['spacing_m']*1000:.0f} mm, {cal['metres_per_pixel']*1000:.2f} mm/px"
+    else:
+        wall_m = float(payload.get("wall_height_m", 4.5))
+        holds = from_polygons(polys, H, wall_m / H)
+        basis = f"assuming {wall_m:.1f} m across the frame"
+
+    ok, span = plausible(None, H, holds=holds)
+    picked = [int(i) for i in payload.get("route", [])]
+    out = {"basis": basis, "wall_span_m": round(span, 2), "plausible": ok,
+           "hold_count": len(holds)}
+    if picked:
+        seq = []
+        for a, b in zip(picked, picked[1:]):
+            seq.append({"from": a, "to": b,
+                        "metres": round(float(np.linalg.norm(holds[b].pos - holds[a].pos)), 2)})
+        out["gaps"] = seq
+        out["total_m"] = round(sum(s["metres"] for s in seq), 2)
+        ys = [holds[i].y for i in picked]
+        out["rise_m"] = round(max(ys) - min(ys), 2)
+        out["sizes_cm"] = [round(holds[i].size * 100, 1) for i in picked]
+    return out
+
+
 @app.get("/api/holds/{pid}")
 def holds(pid: str):
     """Holds already detected for a photo, so a reload need not re-detect."""

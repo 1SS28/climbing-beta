@@ -73,7 +73,8 @@
     <div class="step">
       <h2>4 &middot; Climber</h2>
       <label>height (m)</label><input id="height" value="1.68">
-      <button id="go" style="margin-top:10px; width:100%" disabled>Find beta</button>
+      <button id="measure" style="margin-top:10px; width:100%" disabled>Measure distances</button>
+      <button id="go" class="ghost" style="margin-top:6px; width:100%" disabled>Find beta</button>
     </div>
 
     <div class="step" id="out" style="display:none">
@@ -110,6 +111,20 @@ function draw() {
     ctx.fillStyle = '#ffb454'; ctx.font = `${14*k}px sans-serif`;
     ctx.fillText('TL TR BL BR'.split(' ')[n], x + 14*k, y - 8*k);
   });
+  if (window._gaps) for (const g of window._gaps) {
+    const a = data.holds[g.from].centre, b = data.holds[g.to].centre;
+    ctx.strokeStyle = 'rgba(255,200,60,.85)'; ctx.lineWidth = 3 * k;
+    ctx.setLineDash([10*k, 8*k]);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+    ctx.setLineDash([]);
+    const mx = (a[0]+b[0])/2, my = (a[1]+b[1])/2;
+    const label = g.metres.toFixed(2) + ' m';
+    ctx.font = `600 ${17*k}px sans-serif`;
+    const w = ctx.measureText(label).width;
+    ctx.fillStyle = 'rgba(0,0,0,.75)';
+    ctx.fillRect(mx - w/2 - 6*k, my - 12*k, w + 12*k, 24*k);
+    ctx.fillStyle = '#ffc83c'; ctx.fillText(label, mx - w/2, my + 6*k);
+  }
   if (window._beta) for (const m of window._beta.moves) {
     const a = data.holds[m.from].centre, b = data.holds[m.to].centre;
     ctx.strokeStyle = m.hand ? 'rgba(255,70,70,.9)' : 'rgba(70,170,255,.9)';
@@ -138,7 +153,8 @@ cv.onclick = e => {
   i >= 0 ? route.splice(i, 1) : route.push(best);
   $('#picked').textContent = route.length ? `${route.length} holds picked` : 'none picked';
   $('#go').disabled = route.length < 3;
-  window._beta = null; draw();
+  $('#measure').disabled = route.length < 2;
+  window._beta = null; window._gaps = null; draw();
 };
 
 $('#file').onchange = async e => {
@@ -153,10 +169,30 @@ $('#file').onchange = async e => {
   img.src = '/api/photo/' + data.id + '.jpg';
   $('#detected').textContent = `${data.holds.length} holds found`;
   $('#hint').textContent = 'Click the holds of one route, lowest first.';
-  route = []; corners = []; window._beta = null;
+  route = []; corners = []; window._beta = null; window._gaps = null;
 };
 
-$('#clear').onclick = () => { route = []; window._beta = null;
+$('#measure').onclick = async () => {
+  const body = { id: data.id, route, wall_height_m: +$('#wallh').value };
+  if (corners.length === 4) Object.assign(body, { corners, cols: +$('#cols').value,
+                 rows: +$('#rows').value, spacing_m: +$('#spacing').value });
+  const r = await fetch('/api/measure', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const out = await r.json();
+  window._gaps = out.gaps; window._beta = null; draw();
+  $('#out').style.display = 'block';
+  const warn = out.plausible ? '' :
+    `<div class="warn">${out.wall_span_m} m of wall is not a boulder; check the scale</div>`;
+  $('#result').innerHTML =
+    `<div>${out.total_m} m of travel, ${out.rise_m} m of rise</div>
+     <div class="dim">${out.basis}</div>
+     <div class="dim">holds span ${out.wall_span_m} m of wall</div>${warn}
+     <ol class="moves">` +
+    out.gaps.map((g,i) => `<li>${i+1} to ${i+2}: <b>${g.metres.toFixed(2)} m</b></li>`).join('') +
+    `</ol><div class="dim">hold sizes: ${out.sizes_cm.map(s=>s+' cm').join(', ')}</div>`;
+};
+
+$('#clear').onclick = () => { route = []; window._beta = null; window._gaps = null;
   $('#picked').textContent = 'none picked'; $('#go').disabled = true; draw(); };
 $('#calib').onclick = () => { corners = []; mode = 'corners';
   $('#corners').textContent = '0 of 4';

@@ -85,11 +85,11 @@ def plausible(metres_per_pixel, image_height_px, max_wall_m=MAX_WALL_M, holds=No
     which is impossible. The holds are the wall, so they are what to measure.
     """
     if holds:
-        ys = [h.y for h in holds]
-        span = max(ys) - min(ys)
-        return 0.8 <= span <= max_wall_m, span
-    implied = metres_per_pixel * image_height_px
-    return 1.5 <= implied <= max_wall_m * 2.5, implied
+        ys = [float(h.y) for h in holds]
+        span = float(max(ys) - min(ys))
+        return bool(0.8 <= span <= max_wall_m), span
+    implied = float(metres_per_pixel * image_height_px)
+    return bool(1.5 <= implied <= max_wall_m * 2.5), implied
 
 
 def scale_from_person(person_px_height, person_m=1.70):
