@@ -160,6 +160,57 @@ from colour.
   "The Way Up" (CVPR 2025 workshop).
 - Does mask geometry predict hold type well enough to be worth using? Untested.
 
+## Single-route measurement prototype
+
+Run `.venv/bin/python server.py` and open http://127.0.0.1:8000.
+The browser now focuses on measuring one route:
+
+1. Upload a JPEG, PNG, or WebP photo (up to 20 MB / 40 megapixels).
+2. Set an explicit scale: two points a known distance apart for an approximate,
+   straight-on measurement, or four bolt-grid corners for perspective correction.
+   Grid dimensions count **gaps**, not holes. Enter the actual spacing at the gym.
+3. Select detected holds in route order, or use **Add points** for missed holds.
+   **Move**, **Remove**, and **Earlier** let you correct the measurement sequence.
+4. Measure to see each gap and the sum over the selected sequence. Zoom in for
+   accurate taps and scroll to pan. Changing points or scale clears old results.
+
+All points must lie on the same flat wall panel. Distances are between the
+selected points projected onto that panel; protruding holds and routes crossing
+wall corners are not reconstructed in 3D. The reported rise is the span along
+that panel's up-axis, not a gravity-referenced vertical height. Real accuracy
+still needs comparison with tape-measured gaps. Two-point calibration does not
+remove perspective distortion.
+
+The browser never assumes a wall height. `POST /api/measure` requires an explicit
+`calibration` and either `points` (image pixel coordinates) or `route` (detected
+hold IDs). For example:
+
+```json
+{
+  "id": "<photo id returned by /api/photo>",
+  "points": [[100, 800], [400, 400]],
+  "calibration": {
+    "method": "reference",
+    "points": [[0, 0], [1000, 0]],
+    "metres": 1
+  }
+}
+```
+
+For a grid, use `{"method":"grid", "corners":[[0,0],[1000,0],[0,1000],[1000,1000]],
+"cols":10, "rows":10, "spacing_m":0.1}`. Corners are TL, TR, BL, BR.
+Gap `from`/`to` values index the submitted sequence, not detector IDs. This
+replaces the old measurement payload with optional corners/assumed wall height.
+The experimental `/api/beta` and CLI search remain available with their existing
+interfaces; beta search is not part of this measurement UI.
+
+Photos are stored locally; detections remain in memory and must be uploaded
+again after a server restart. Detection selects MPS, CUDA, or CPU automatically.
+The trained weights must exist at `runs/v1_960_best.pt`.
+
+Checks: `.venv/bin/python tests.py` and
+`.venv/bin/python -m unittest test_measurement` (API tests require `httpx`).
+
 ## Running it
 
 ```bash

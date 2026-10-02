@@ -1,228 +1,69 @@
 <!doctype html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Climbing Beta</title>
+<title>Climbing Beta · Route measurements</title>
 <style>
-  :root { --bg:#14161a; --panel:#1d2026; --ink:#e8eaed; --dim:#9aa1ab;
-          --line:#2c313a; --accent:#4da3ff; --warn:#ffb454; }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink);
-         font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-  header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex;
-           align-items:baseline; gap:14px; flex-wrap:wrap; }
-  h1 { font-size:16px; margin:0; font-weight:600; }
-  .hint { color:var(--dim); font-size:13px; }
-  main { display:flex; gap:0; height:calc(100vh - 53px); }
-  #stage { flex:1; overflow:auto; background:#0e1013; position:relative; }
-  canvas { display:block; cursor:crosshair; }
-  aside { width:330px; border-left:1px solid var(--line); background:var(--panel);
-          padding:16px; overflow-y:auto; }
-  .step { border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:12px; }
-  .step h2 { font-size:13px; margin:0 0 6px; text-transform:uppercase;
-             letter-spacing:.06em; color:var(--dim); font-weight:600; }
-  button { background:var(--accent); color:#06121f; border:0; border-radius:6px;
-           padding:8px 12px; font-weight:600; cursor:pointer; font-size:13px; }
-  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
-  button:disabled { opacity:.4; cursor:default; }
-  label { display:block; margin:8px 0 3px; color:var(--dim); font-size:12px; }
-  input { width:100%; padding:6px 8px; background:#12151a; border:1px solid var(--line);
-          border-radius:5px; color:var(--ink); font-size:13px; }
-  .row { display:flex; gap:8px; } .row > * { flex:1; }
-  ol { margin:6px 0 0; padding-left:20px; } li { margin:3px 0; }
-  .dim { color:var(--dim); } .warn { color:var(--warn); }
-  .moves { font-variant-numeric:tabular-nums; }
-</style>
-
-<header>
-  <h1>Climbing Beta</h1>
-  <span class="hint" id="hint">Upload a photo of a wall to begin.</span>
-</header>
-
-<main>
-  <div id="stage"><canvas id="c"></canvas></div>
-  <aside>
-    <div class="step">
-      <h2>1 &middot; Photo</h2>
-      <input type="file" id="file" accept="image/*">
-      <div class="dim" id="detected" style="margin-top:6px"></div>
-    </div>
-
-    <div class="step">
-      <h2>2 &middot; Route</h2>
-      <div class="dim">Click the holds of one route, lowest first.
-      Click again to remove.</div>
-      <div style="margin-top:8px" id="picked" class="dim">none picked</div>
-      <button class="ghost" id="clear" style="margin-top:8px">Clear</button>
-    </div>
-
-    <div class="step">
-      <h2>3 &middot; Scale</h2>
-      <div class="dim">Best: click four bolt holes on one flat panel, far apart,
-      in order top-left, top-right, bottom-left, bottom-right.</div>
-      <button class="ghost" id="calib" style="margin-top:8px">Pick bolt holes</button>
-      <div id="corners" class="dim" style="margin-top:6px">0 of 4</div>
-      <div class="row">
-        <div><label>holes across</label><input id="cols" value="8"></div>
-        <div><label>holes up</label><input id="rows" value="8"></div>
-      </div>
-      <label>spacing between holes (m)</label><input id="spacing" value="0.1524">
-      <label>or, no bolt holes: wall height in frame (m)</label>
-      <input id="wallh" value="4.5">
-    </div>
-
-    <div class="step">
-      <h2>4 &middot; Climber</h2>
-      <label>height (m)</label><input id="height" value="1.68">
-      <button id="measure" style="margin-top:10px; width:100%" disabled>Measure distances</button>
-      <button id="go" class="ghost" style="margin-top:6px; width:100%" disabled>Find beta</button>
-    </div>
-
-    <div class="step" id="out" style="display:none">
-      <h2>Beta</h2>
-      <div id="result"></div>
-    </div>
-  </aside>
-</main>
-
-<script>
-const $ = s => document.querySelector(s);
-const cv = $('#c'), ctx = cv.getContext('2d');
-let img = null, data = null, route = [], corners = [], mode = 'route';
-
-function draw() {
-  if (!img) return;
-  ctx.drawImage(img, 0, 0);
-  const k = Math.max(1, img.width / 900);
-  for (const h of data.holds) {
-    const i = route.indexOf(h.id);
-    ctx.strokeStyle = i >= 0 ? '#4da3ff' : 'rgba(255,255,255,.22)';
-    ctx.lineWidth = (i >= 0 ? 4 : 1.4) * k;
-    ctx.beginPath();
-    h.points.forEach(([x, y], n) => n ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
-    ctx.closePath(); ctx.stroke();
-    if (i >= 0) {
-      ctx.fillStyle = '#4da3ff'; ctx.font = `${16*k}px sans-serif`;
-      ctx.fillText(i + 1, h.centre[0] + 10*k, h.centre[1] - 10*k);
-    }
-  }
-  corners.forEach(([x, y], n) => {
-    ctx.strokeStyle = '#ffb454'; ctx.lineWidth = 3 * k;
-    ctx.beginPath(); ctx.arc(x, y, 11*k, 0, 7); ctx.stroke();
-    ctx.fillStyle = '#ffb454'; ctx.font = `${14*k}px sans-serif`;
-    ctx.fillText('TL TR BL BR'.split(' ')[n], x + 14*k, y - 8*k);
-  });
-  if (window._gaps) for (const g of window._gaps) {
-    const a = data.holds[g.from].centre, b = data.holds[g.to].centre;
-    ctx.strokeStyle = 'rgba(255,200,60,.85)'; ctx.lineWidth = 3 * k;
-    ctx.setLineDash([10*k, 8*k]);
-    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
-    ctx.setLineDash([]);
-    const mx = (a[0]+b[0])/2, my = (a[1]+b[1])/2;
-    const label = g.metres.toFixed(2) + ' m';
-    ctx.font = `600 ${17*k}px sans-serif`;
-    const w = ctx.measureText(label).width;
-    ctx.fillStyle = 'rgba(0,0,0,.75)';
-    ctx.fillRect(mx - w/2 - 6*k, my - 12*k, w + 12*k, 24*k);
-    ctx.fillStyle = '#ffc83c'; ctx.fillText(label, mx - w/2, my + 6*k);
-  }
-  if (window._beta) for (const m of window._beta.moves) {
-    const a = data.holds[m.from].centre, b = data.holds[m.to].centre;
-    ctx.strokeStyle = m.hand ? 'rgba(255,70,70,.9)' : 'rgba(70,170,255,.9)';
-    ctx.lineWidth = 5 * k;
-    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
-  }
+:root { color-scheme:dark; --bg:#14161a; --panel:#1d2026; --ink:#e8eaed; --dim:#a8afb9; --line:#353c47; --accent:#69b2ff; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui,sans-serif; }
+header { padding:14px 20px; border-bottom:1px solid var(--line); }
+h1 { margin:0; font-size:19px; } h2 { font-size:15px; margin:0 0 10px; }
+p { margin:8px 0; } .dim { color:var(--dim); font-size:13px; }
+main { display:grid; grid-template-columns:minmax(0,1fr) 360px; height:calc(100dvh - 90px); }
+#viewer { min-height:0; min-width:0; display:flex; flex-direction:column; }
+#toolbar { padding:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+#stage { overflow:auto; flex:1; min-height:0; background:#0e1013; }
+#empty { padding:48px 24px; text-align:center; color:var(--dim); }
+canvas { display:block; cursor:crosshair; touch-action:pan-x pan-y; }
+aside { overflow:auto; padding:16px; background:var(--panel); }
+section { padding-bottom:18px; margin-bottom:18px; border-bottom:1px solid var(--line); }
+button,input,select { font:inherit; min-height:44px; border-radius:6px; border:1px solid var(--line); padding:8px; }
+button { background:#29313c; color:var(--ink); cursor:pointer; }
+button:disabled { opacity:.45; cursor:default; }
+button[aria-pressed=true],#measure { background:var(--accent); color:#071524; }
+input,select { background:#12151a; color:var(--ink); width:100%; }
+label { display:block; font-size:13px; color:var(--dim); margin:10px 0 4px; }
+.row { display:flex; gap:8px; } .row > * { flex:1; min-width:0; }
+#measure { width:100%; font-weight:700; }
+#status { min-height:24px; margin:4px 0 0; color:var(--dim); }
+#error { color:#ffb8a5; } .warning { color:#ffd082; }
+#route-list { padding-left:24px; } #route-list li { margin:8px 0; }
+#route-list button { font-size:12px; margin-left:4px; }
+#result { font-variant-numeric:tabular-nums; }
+[hidden] { display:none !important; }
+@media(max-width:760px) {
+ main { display:block; height:auto; }
+ #viewer { position:sticky; top:0; background:var(--bg); z-index:2; height:48dvh; }
+ aside { overflow:visible; padding:16px; }
+ input,select { font-size:16px; }
 }
-
-cv.onclick = e => {
-  const r = cv.getBoundingClientRect();
-  const x = (e.clientX - r.left) * (cv.width / r.width);
-  const y = (e.clientY - r.top) * (cv.height / r.height);
-  if (mode === 'corners') {
-    if (corners.length < 4) corners.push([x, y]);
-    $('#corners').textContent = `${corners.length} of 4`;
-    if (corners.length === 4) { mode = 'route'; $('#hint').textContent = 'Now click the holds of one route.'; }
-    draw(); return;
-  }
-  let best = -1, bd = 1e9;
-  for (const h of data.holds) {
-    const d = Math.hypot(h.centre[0] - x, h.centre[1] - y);
-    if (d < bd) { bd = d; best = h.id; }
-  }
-  if (bd > 90) return;
-  const i = route.indexOf(best);
-  i >= 0 ? route.splice(i, 1) : route.push(best);
-  $('#picked').textContent = route.length ? `${route.length} holds picked` : 'none picked';
-  $('#go').disabled = route.length < 3;
-  $('#measure').disabled = route.length < 2;
-  window._beta = null; window._gaps = null; draw();
-};
-
-$('#file').onchange = async e => {
-  const f = e.target.files[0]; if (!f) return;
-  $('#hint').textContent = 'Detecting holds, this takes a few seconds...';
-  const fd = new FormData(); fd.append('file', f);
-  const res = await fetch('/api/photo', { method: 'POST', body: fd });
-  data = await res.json();
-  img = new Image();
-  img.onload = () => { cv.width = img.width; cv.height = img.height;
-                       cv.style.width = Math.min(img.width, 1100) + 'px'; draw(); };
-  img.src = '/api/photo/' + data.id + '.jpg';
-  $('#detected').textContent = `${data.holds.length} holds found`;
-  $('#hint').textContent = 'Click the holds of one route, lowest first.';
-  route = []; corners = []; window._beta = null; window._gaps = null;
-};
-
-$('#measure').onclick = async () => {
-  const body = { id: data.id, route, wall_height_m: +$('#wallh').value };
-  if (corners.length === 4) Object.assign(body, { corners, cols: +$('#cols').value,
-                 rows: +$('#rows').value, spacing_m: +$('#spacing').value });
-  const r = await fetch('/api/measure', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const out = await r.json();
-  window._gaps = out.gaps; window._beta = null; draw();
-  $('#out').style.display = 'block';
-  const warn = out.plausible ? '' :
-    `<div class="warn">${out.wall_span_m} m of wall is not a boulder; check the scale</div>`;
-  $('#result').innerHTML =
-    `<div>${out.total_m} m of travel, ${out.rise_m} m of rise</div>
-     <div class="dim">${out.basis}</div>
-     <div class="dim">holds span ${out.wall_span_m} m of wall</div>${warn}
-     <ol class="moves">` +
-    out.gaps.map((g,i) => `<li>${i+1} to ${i+2}: <b>${g.metres.toFixed(2)} m</b></li>`).join('') +
-    `</ol><div class="dim">hold sizes: ${out.sizes_cm.map(s=>s+' cm').join(', ')}</div>`;
-};
-
-$('#clear').onclick = () => { route = []; window._beta = null; window._gaps = null;
-  $('#picked').textContent = 'none picked'; $('#go').disabled = true; draw(); };
-$('#calib').onclick = () => { corners = []; mode = 'corners';
-  $('#corners').textContent = '0 of 4';
-  $('#hint').textContent = 'Click four bolt holes: top-left, top-right, bottom-left, bottom-right.'; };
-
-$('#go').onclick = async () => {
-  $('#go').disabled = true; $('#hint').textContent = 'Searching...';
-  const body = { id: data.id, route, height_m: +$('#height').value,
-                 wall_height_m: +$('#wallh').value };
-  if (corners.length === 4) Object.assign(body, { corners, cols: +$('#cols').value,
-                 rows: +$('#rows').value, spacing_m: +$('#spacing').value });
-  const r = await fetch('/api/beta', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const out = await r.json();
-  $('#out').style.display = 'block'; $('#go').disabled = false;
-  $('#hint').textContent = '';
-  if (!out.ok) {
-    window._beta = null; draw();
-    $('#result').innerHTML = `<div class="warn">${out.reason}</div>
-      <div class="dim" style="margin-top:6px">${out.scale}</div>`;
-    return;
-  }
-  window._beta = out; draw();
-  const dropped = out.dropped.length
-    ? `<div class="warn" style="margin-top:6px">${out.dropped.length} picked hold(s) were off the line and ignored</div>` : '';
-  $('#result').innerHTML =
-    `<div>${out.moves.length} moves &middot; cost ${out.cost}</div>
-     <div class="dim">${out.scale}</div>${dropped}
-     <ol class="moves">` +
-    out.moves.map(m => `<li>${m.limb} &rarr; hold ${route.indexOf(m.to) + 1 || '&middot;'}
-      <span class="dim">${m.distance_m} m</span></li>`).join('') + '</ol>';
-};
-</script>
+</style>
+</head>
+<body>
+<header><h1>Climbing Beta · Route measurements</h1><p id="status" role="status" aria-live="polite">Upload one route on a flat wall panel to begin.</p></header>
+<main>
+<div id="viewer">
+ <div id="toolbar"><button id="fit" disabled>Fit photo</button><button id="zoom-in" disabled aria-label="Zoom in">＋</button><button id="zoom-out" disabled aria-label="Zoom out">−</button><span class="dim">Zoom for precise taps. Scroll to pan.</span></div>
+ <div id="stage"><div id="empty">Your photo and route distances will appear here.</div><canvas id="c" hidden aria-label="Route photo. Tap to select holds, place points, or calibrate."></canvas></div>
+</div>
+<aside>
+ <section><h2>1 · Photo</h2><label for="file">Choose a wall photo</label><input type="file" id="file" accept="image/jpeg,image/png,image/webp"><p id="detected" class="dim"></p></section>
+ <section><h2>2 · Set the scale</h2>
+  <label for="method">Calibration method</label><select id="method"><option value="reference">Known distance · approximate</option><option value="grid">Bolt grid · perspective corrected</option></select>
+  <div id="reference-fields"><p class="dim">Pick two points a known distance apart on the wall. Use a photo taken straight on; this method does not correct perspective.</p><label for="metres">Distance between reference points (m)</label><input id="metres" type="number" min="0.001" step="any" placeholder="e.g. 1.2"></div>
+  <div id="grid-fields" hidden><p class="dim">Pick four bolt holes far apart on the same flat panel: top-left, top-right, bottom-left, bottom-right. Use the gym’s actual spacing.</p><div class="row"><div><label for="cols">Gaps across</label><input id="cols" type="number" min="1" step="1" placeholder="e.g. 8"></div><div><label for="rows">Gaps up</label><input id="rows" type="number" min="1" step="1" placeholder="e.g. 8"></div></div><label for="spacing">Bolt spacing (m)</label><input id="spacing" type="number" min="0.001" step="any" placeholder="e.g. 0.1524"><p class="dim">Count spaces between holes: 9 holes = 8 gaps.</p></div>
+  <button id="calibrate" disabled>Pick reference points</button><button id="undo-reference" disabled>Undo reference point</button><p id="calibration-status" class="dim">0 of 2 reference points</p>
+ </section>
+ <section><h2>3 · Select the route</h2><p class="dim">Tap holds in the order you want to measure. Add a point for a missed hold. Use “Move” to adjust a selected point, then tap its new position.</p>
+  <div class="row"><button id="select" aria-pressed="true" disabled>Select holds</button><button id="manual" aria-pressed="false" disabled>Add points</button></div>
+  <ol id="route-list"></ol><div class="row"><button id="undo" disabled>Undo last point</button><button id="clear" disabled>Clear route</button></div>
+ </section>
+ <button id="measure" disabled>Measure distances</button><p id="ready" class="dim">Upload a photo first.</p><p id="error" role="alert"></p>
+ <section id="out" hidden><h2>Route distances</h2><div id="result"></div><p class="dim">Straight-line distances between selected points in the wall plane. The sum of gaps is not the climber’s actual travel. Holds protruding from the wall and routes across wall corners need a different model.</p></section>
+</aside>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

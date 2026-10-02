@@ -1,4 +1,4 @@
-"""Prototype server: upload a wall photo, pick a route, get beta.
+"""Prototype server: upload a wall photo and measure a single route.
 
     .venv/bin/python server.py      then open http://127.0.0.1:8000
 
@@ -13,27 +13,32 @@ Holds are detected once per photo and cached, because that is the slow step.
 """
 
 import io
-import json
+import logging
 import uuid
 from pathlib import Path
+from threading import Lock
 
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from PIL import Image
+from PIL import Image, ImageOps, UnidentifiedImageError
+from starlette.concurrency import run_in_threadpool
 
-from beta import Climber, describe, find_start, route_chain, search
+from measurement import Measurement, measure_route
+
+from beta import Climber, find_start, route_chain, search
 from calibrate import calibrate
 from scene import MAX_WALL_M, from_polygons, from_wall_plane, plausible
-from wall import to_wall_metres
 
-UPLOADS = Path("data/uploads")
+ROOT = Path(__file__).resolve().parent
+UPLOADS = ROOT / "data/uploads"
 UPLOADS.mkdir(parents=True, exist_ok=True)
-STATIC = Path("static")
+STATIC = ROOT / "static"
 
 app = FastAPI()
 _model = None
+_detection_lock = Lock()
 _cache: dict[str, dict] = {}
 
 
@@ -41,20 +46,39 @@ def model():
     global _model
     if _model is None:
         from ultralytics import YOLO
-        _model = YOLO("runs/v1_960_best.pt")
+        _model = YOLO(str(ROOT / "runs/v1_960_best.pt"))
     return _model
 
 
 @app.post("/api/photo")
 async def photo(file: UploadFile = File(...)):
     """Store a photo, detect its holds, return them as polygons."""
-    raw = await file.read()
-    img = Image.open(io.BytesIO(raw)).convert("RGB")
+    raw = await file.read(20 * 1024 * 1024 + 1)
+    if len(raw) > 20 * 1024 * 1024:
+        raise HTTPException(413, "Photo is too large; choose one under 20 MB.")
+    try:
+        with Image.open(io.BytesIO(raw)) as source:
+            if source.width * source.height > 40_000_000:
+                raise HTTPException(413, "Photo is too large; use at most 40 megapixels.")
+            img = ImageOps.exif_transpose(source).convert("RGB")
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
+        raise HTTPException(400, "Cannot read this photo. Try a JPEG, PNG, or WebP image.")
     pid = uuid.uuid4().hex[:12]
     path = UPLOADS / f"{pid}.jpg"
     img.save(path, quality=92)
 
-    r = model().predict(str(path), imgsz=1600, conf=0.15, device="mps", verbose=False)[0]
+    def detect():
+        import torch
+        device = "mps" if torch.backends.mps.is_available() else (0 if torch.cuda.is_available() else "cpu")
+        with _detection_lock:
+            return model().predict(str(path), imgsz=1600, conf=0.15, device=device, verbose=False)[0]
+
+    try:
+        r = await run_in_threadpool(detect)
+    except Exception:
+        logging.exception("Hold detection failed")
+        path.unlink(missing_ok=True)
+        raise HTTPException(503, "Hold detection is unavailable. Please try again.")
     polys = [np.asarray(p) for p in (r.masks.xy if r.masks is not None else []) if len(p) >= 3]
     _cache[pid] = {"polys": polys, "size": img.size}
     return {
@@ -125,45 +149,14 @@ async def beta(payload: dict):
 
 
 @app.post("/api/measure")
-async def measure(payload: dict):
-    """Distances between picked holds, and the wall they sit on.
-
-    Separate from /api/beta on purpose. This part can be checked with a tape
-    measure, so it either agrees with reality or it does not, which is more
-    than can be said for a proposed sequence of moves.
-    """
-    pid = payload.get("id")
-    if pid not in _cache:
-        raise HTTPException(404, "unknown photo; upload it again")
-    entry = _cache[pid]
-    polys, (W, H) = entry["polys"], entry["size"]
-
-    corners = payload.get("corners")
-    if corners and len(corners) == 4:
-        cal = calibrate([tuple(c) for c in corners], int(payload["cols"]), int(payload["rows"]),
-                        float(payload.get("spacing_m", 0.1524)), (W, H))
-        holds = from_wall_plane(polys, np.array(cal["H"]))
-        basis = f"bolt grid at {cal['spacing_m']*1000:.0f} mm, {cal['metres_per_pixel']*1000:.2f} mm/px"
-    else:
-        wall_m = float(payload.get("wall_height_m", 4.5))
-        holds = from_polygons(polys, H, wall_m / H)
-        basis = f"assuming {wall_m:.1f} m across the frame"
-
-    ok, span = plausible(None, H, holds=holds)
-    picked = [int(i) for i in payload.get("route", [])]
-    out = {"basis": basis, "wall_span_m": round(span, 2), "plausible": ok,
-           "hold_count": len(holds)}
-    if picked:
-        seq = []
-        for a, b in zip(picked, picked[1:]):
-            seq.append({"from": a, "to": b,
-                        "metres": round(float(np.linalg.norm(holds[b].pos - holds[a].pos)), 2)})
-        out["gaps"] = seq
-        out["total_m"] = round(sum(s["metres"] for s in seq), 2)
-        ys = [holds[i].y for i in picked]
-        out["rise_m"] = round(max(ys) - min(ys), 2)
-        out["sizes_cm"] = [round(holds[i].size * 100, 1) for i in picked]
-    return out
+async def measure(payload: Measurement):
+    """Measure selected points with an explicit reference; detection is optional."""
+    if payload.id not in _cache:
+        raise HTTPException(404, "Unknown photo; upload it again.")
+    try:
+        return measure_route(payload, _cache[payload.id])
+    except (ValueError, np.linalg.LinAlgError) as exc:
+        raise HTTPException(400, str(exc))
 
 
 @app.get("/api/holds/{pid}")
