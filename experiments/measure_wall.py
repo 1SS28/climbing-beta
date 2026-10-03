@@ -44,7 +44,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-from lattice import confirm_grid, hough_circles
+from experiments.lattice import confirm_grid, hough_circles
 from scene import MAX_WALL_M
 from wall import homography, intrinsics, plane_from_homography, wall_angle
 

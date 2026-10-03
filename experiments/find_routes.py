@@ -13,9 +13,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from colour import group as colour_group
-from colour import hold_colour
-from routes import best_group
+from experiments.colour import group as colour_group
+from experiments.colour import hold_colour
+from experiments.routes import best_group
 
 limit = int(sys.argv[1]) if len(sys.argv) > 1 else 120
 

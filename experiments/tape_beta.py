@@ -17,9 +17,9 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from beta import Climber, describe, find_start, route_chain, search
-from colour import group as colour_group
+from experiments.colour import group as colour_group
 from scene import from_polygons, from_wall_plane
-from tape import assign, hold_mask, saturated_blobs
+from experiments.tape import assign, hold_mask, saturated_blobs
 
 src = sys.argv[1]
 want = int(sys.argv[2]) if len(sys.argv) > 2 else -1

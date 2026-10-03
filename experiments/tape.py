@@ -25,7 +25,7 @@ not, since a rim curves and shades.
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-from colour import srgb_to_lab
+from experiments.colour import srgb_to_lab
 
 
 def hold_mask(img, polys, dilate=11):

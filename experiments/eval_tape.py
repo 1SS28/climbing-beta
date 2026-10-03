@@ -26,9 +26,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from colour import group as colour_group
-from colour import srgb_to_lab
-from tape import hold_mask, saturated_blobs
+from experiments.colour import group as colour_group
+from experiments.colour import srgb_to_lab
+from experiments.tape import hold_mask, saturated_blobs
 
 
 def model_tapes(model, path, img, conf=0.25, imgsz=1280):

@@ -7,7 +7,7 @@ import sys
 
 from PIL import ImageDraw
 
-from data import load
+from experiments.data import load
 
 src = sys.argv[1]
 dst = sys.argv[2] if len(sys.argv) > 2 else "out/v0.png"

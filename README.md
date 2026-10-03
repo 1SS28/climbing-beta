@@ -56,18 +56,20 @@ routes unclimbable on paper.
 
 ## Files
 
+The root holds the code that runs. Everything else is under `experiments/`,
+with a README there saying what each piece established and why it is not here.
+
 | file | purpose |
 | --- | --- |
 | `prepare.py` | ClimbInst Labelme JSON to YOLO segmentation format |
 | `train.py` | fine-tune YOLO11-seg |
-| `predict.py` | run a trained model, save mask overlays |
-| `colour.py` | sRGB to CIELAB, and clustering holds by colour |
-| `routes.py` | score how route-like a colour group is |
+| `wall.py` | homography, wall angle, and image to wall-plane metres |
+| `calibrate.py` | four bolt holes to a wall calibration, saved as JSON |
 | `scene.py` | holds in metric 3D, the platform-neutral representation |
+| `measurement.py` | validated calibrations, and what they place on the wall |
 | `beta.py` | stance graph and the search over it |
-| `v3_beta.py` | photo to beta, end to end |
-| `find_routes.py` | scan the dataset for walls with colour-coded routes |
-| `lattice.py` | T-nut grid scale estimation (does not work, see below) |
+| `server.py` | the measurement prototype |
+| `tests.py`, `test_measurement.py` | the checks |
 
 ## Status
 
@@ -83,7 +85,10 @@ this machine, so spend it.
 
 Known failure: objects that are not on the wall get detected as holds, such as
 brushes on the mat, a brush hanging from the ceiling, and wall signs. A
-wall-plane or ground-line filter should clear most of them.
+calibration now removes the ones a wall plane can rule out, which is less than
+the problem: a brush on the mat in front of a vertical wall projects to a
+sensible size in a sensible place and survives. The floor line or a learned
+on-wall test is what the rest needs.
 
 ### V2: route grouping
 Done. Single linkage failed outright: hold colours form a continuum from orange
@@ -118,8 +123,11 @@ quietly decide the beta. Only the distances between the four contact points are
 observable, so only those are constrained.
 
 ### V5: next
-Tune the cost weights against routes that a person has actually climbed. Filter
-detections that are not on the wall. Infer hold orientation from mask geometry.
+Measure a route with a tape measure and compare, which is the first real error
+figure the geometry will have had. Then tune the reach limits and cost weights
+against routes a person has actually climbed: `step_max` at 0.55 of height
+rejects 91% of candidate moves, and nothing has tested whether that is right.
+Infer hold orientation from mask geometry.
 
 ## Data
 
@@ -142,7 +150,7 @@ from colour.
 - How should reach be calibrated without knowing the wall's scale? By asking.
   The T-nut grid was the automatic candidate and it does not work. Gym walls
   are drilled on a regular lattice, so the bolt holes should be a ruler lying
-  in the image. Tested two ways in `lattice.py` across three walls: dark-blob
+  in the image. Tested two ways in `experiments/lattice.py` across three walls: dark-blob
   detection with a pair-distance histogram returns about 13,000 candidates per
   image, which is wall texture rather than holes, and an FFT power spectrum of
   a bare-wall patch shows no dominant peak (top five radii at 3.4 to 3.8x
@@ -199,10 +207,25 @@ hold IDs). For example:
 
 For a grid, use `{"method":"grid", "corners":[[0,0],[1000,0],[0,1000],[1000,1000]],
 "cols":10, "rows":10, "spacing_m":0.1}`. Corners are TL, TR, BL, BR.
-Gap `from`/`to` values index the submitted sequence, not detector IDs. This
-replaces the old measurement payload with optional corners/assumed wall height.
-The experimental `/api/beta` and CLI search remain available with their existing
-interfaces; beta search is not part of this measurement UI.
+Gap `from`/`to` values index the submitted sequence, not detector IDs.
+
+`POST /api/beta` takes the same `calibration`, plus `route` as detected hold IDs
+in order and an optional `height_m`. It has no assumed wall height either: a
+beta used to be computable from a scale `/api/measure` would have refused, which
+is how a calibration putting holds across 11.4 m of wall once reached the
+geometry unchallenged. Beta search is not part of the measurement UI.
+
+A calibration also gives the wall plane, so detections it cannot place are
+reported as `off_wall` rather than entering the search: masks across the
+projective horizon, masks whose wall-plane span is not a hold's, and masks
+beyond the calibrated block by more than a boulder's height. On 542 detections
+across four gym photos the span bounds dropped nothing, with holds reading 2 to
+66 cm against bounds of 1 cm and 1.2 m, so they are a guard against a wrong
+scale rather than a filter that fires. The horizon bands do real work on a
+steeply angled wall, where the vanishing line falls inside the frame. None of
+this identifies a brush lying on the mat in front of a vertical wall, which
+projects to a sensible size in a sensible place; that known detector failure
+needs the floor line or a learned on-wall test and is still open.
 
 Photos are stored locally; detections remain in memory and must be uploaded
 again after a server restart. Detection selects MPS, CUDA, or CPU automatically.
@@ -217,7 +240,7 @@ Checks: `.venv/bin/python tests.py` and
 uv sync
 .venv/bin/python prepare.py
 .venv/bin/python train.py --model yolo11s-seg.pt --epochs 60 --imgsz 960 --batch 6 --name v1_960
-.venv/bin/python v3_beta.py photo.jpg -1 "150,1750,4.5" 1.68
+.venv/bin/python -m experiments.v3_beta photo.jpg -1 "150,1750,4.5" 1.68
 ```
 
 The last three arguments are the route group (-1 picks the best-scoring one), a

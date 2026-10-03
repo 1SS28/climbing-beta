@@ -10,8 +10,8 @@ Each test below pins something that was actually wrong at some point.
 import numpy as np
 
 from beta import Climber, feasible, find_start, route_chain, search
-from colour import group, srgb_to_lab
-from lattice import box_mean
+from experiments.colour import group, srgb_to_lab
+from experiments.lattice import box_mean
 from scene import Hold, from_polygons, from_wall_plane, polygon_area, scale_from_person, scale_from_tnuts
 from wall import homography, intrinsics, plane_from_homography, to_wall_metres, wall_angle
 

@@ -30,7 +30,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from tape import hold_mask, saturated_blobs
+from experiments.tape import hold_mask, saturated_blobs
 
 OUT = Path("data/tape")
 PAD = 6  # box padding, px

@@ -30,7 +30,7 @@ skipped.
 
 import numpy as np
 
-from lattice import sobel
+from experiments.lattice import sobel
 
 
 def edge_lines(gray, grad_min=25.0, max_tilt_deg=35.0, stride=2):

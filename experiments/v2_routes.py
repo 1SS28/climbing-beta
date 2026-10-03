@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from colour import group, hold_colour
+from experiments.colour import group, hold_colour
 
 src = sys.argv[1]
 weights = sys.argv[2] if len(sys.argv) > 2 else "runs/v1_960_best.pt"

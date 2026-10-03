@@ -13,9 +13,9 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from beta import Climber, describe, find_start, route_chain, search
-from colour import group as colour_group
-from colour import hold_colour
-from routes import best_group
+from experiments.colour import group as colour_group
+from experiments.colour import hold_colour
+from experiments.routes import best_group
 from scene import from_polygons, from_wall_plane, scale_from_reference
 
 src = sys.argv[1]
