@@ -8,6 +8,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 from PIL import Image
 
+import measurement
 import server
 
 
@@ -96,3 +97,126 @@ class MeasurementTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def square(cx, cy, half):
+    """A square mask, the simplest polygon with an area."""
+    return np.array([[cx - half, cy - half], [cx + half, cy - half],
+                     [cx + half, cy + half], [cx - half, cy + half]], dtype=float)
+
+
+# Straight-on 2 x 2 m block at 250 px/m: wall x = (u - 100) / 250, y = (1000 - v) / 250.
+FLAT = {'method': 'grid', 'corners': [[100, 500], [600, 500], [100, 1000], [600, 1000]],
+        'cols': 10, 'rows': 10, 'spacing_m': .2}
+FLAT_SIZE = (700, 1100)
+
+# The same block on a wall 60 degrees off square, which puts the vanishing line
+# inside the frame. Rows below v=800 run away; below v=960 they cannot be placed.
+TILTED = {'method': 'grid', 'corners': [[233.3, 286.7], [766.7, 286.7],
+                                        [330.9, 533.8], [669.1, 533.8]],
+          'cols': 10, 'rows': 10, 'spacing_m': .2}
+TILTED_SIZE = (1000, 1000)
+
+
+def pixel(x, y):
+    return [100 + 250 * x, 1000 - 250 * y]
+
+
+def ladder(n=10, step=.35):
+    """A climbable route, as detector polygons under FLAT."""
+    return [square(*pixel(.35 if i % 2 == 0 else .75, .3 + step * i), 10) for i in range(n)]
+
+
+class HoldFilterTests(unittest.TestCase):
+    """What a calibration can say about a mask that is not a hold on this wall."""
+
+    def place(self, calibration, polys, size):
+        return measurement.holds_from_calibration(
+            measurement.Grid(**calibration), polys, size)
+
+    def test_places_a_hold_in_wall_metres(self):
+        placed = self.place(FLAT, [square(*pixel(1, 1), 10)], FLAT_SIZE)
+        self.assertEqual((placed.ids, placed.dropped), ([0], []))
+        self.assertAlmostEqual(placed.holds[0].x, 1, places=3)
+        self.assertAlmostEqual(placed.holds[0].y, 1, places=3)
+        self.assertAlmostEqual(placed.holds[0].size, .08, places=3)
+
+    def test_drops_masks_no_hold_could_be(self):
+        polys = [square(*pixel(1, 1), 10), square(*pixel(1, 1), 200),
+                 square(*pixel(1, 1), 1), np.array([[350., 750.], [360., 750.]])]
+        placed = self.place(FLAT, polys, FLAT_SIZE)
+        self.assertEqual(placed.ids, [0])
+        reasons = {d['id']: d['reason'] for d in placed.dropped}
+        self.assertIn('spans 1.60 m', reasons[1])  # a sign, not a hold
+        self.assertIn('spans 0.01 m', reasons[2])  # mask noise
+        self.assertIn('no area', reasons[3])
+
+    def test_drops_what_the_vanishing_line_ruins(self):
+        polys = [square(500, 400, 8), square(500, 900, 8), square(500, 990, 8)]
+        placed = self.place(TILTED, polys, TILTED_SIZE)
+        self.assertEqual(placed.ids, [0])
+        reasons = {d['id']: d['reason'] for d in placed.dropped}
+        self.assertIn('off the calibrated wall', reasons[1])
+        self.assertIn('off the wall plane', reasons[2])
+
+    def test_a_reference_scale_keeps_everything_it_can_place(self):
+        reference = measurement.Reference(method='reference', points=[[0, 0], [250, 0]], metres=1)
+        placed = measurement.holds_from_calibration(
+            reference, [square(*pixel(1, 1), 10)], FLAT_SIZE)
+        self.assertEqual(placed.ids, [0])
+
+
+class BetaTests(unittest.TestCase):
+    def setUp(self):
+        self.client = TestClient(server.app)
+        server._cache['beta'] = {'size': FLAT_SIZE, 'polys': ladder()}
+        self.body = {'id': 'beta', 'calibration': FLAT, 'route': list(range(10)), 'height_m': 1.68}
+
+    def tearDown(self):
+        server._cache.pop('beta', None)
+
+    def post(self, **changes):
+        return self.client.post('/api/beta', json=dict(self.body, **changes))
+
+    def test_no_implicit_scale(self):
+        # An assumed wall height used to reach the search here, so a beta could
+        # be computed from a scale /api/measure would have refused.
+        body = dict(self.body); body.pop('calibration')
+        self.assertEqual(self.client.post('/api/beta', json=body).status_code, 422)
+        self.assertEqual(self.post(wall_height_m=4.5).status_code, 422)
+        self.assertEqual(self.post(calibration={}).status_code, 422)
+
+    def test_climbs_a_projected_ladder(self):
+        result = self.post().json()
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['off_wall'], [])
+        self.assertIn('0.2 m', result['basis'])
+        self.assertTrue(all(m['limb'] in ('LH', 'RH', 'LF', 'RF') for m in result['moves']))
+        self.assertTrue(all(0 <= m['to'] < 10 for m in result['moves']))  # detector ids
+        self.assertIn(9, (result['moves'][-1]['to'], *result['start'].values()))
+
+    def test_a_route_hold_off_the_wall_is_explained(self):
+        server._cache['beta']['polys'] = ladder() + [square(*pixel(1, 1), 200)]
+        result = self.post(route=[0, 1, 2, 10])
+        self.assertEqual(result.status_code, 200)
+        self.assertFalse(result.json()['ok'])
+        self.assertIn('[10]', result.json()['reason'])
+        self.assertEqual([d['id'] for d in result.json()['off_wall']], [10])
+
+    def test_implausible_calibration_is_refused_not_climbed(self):
+        # Calling each 0.2 m gap 0.5 m stretches the ladder over 7.9 m of wall.
+        result = self.post(calibration=dict(FLAT, spacing_m=.5)).json()
+        self.assertFalse(result['ok'])
+        self.assertIn('not a boulder', result['reason'])
+        # Stretched far enough, the holds leave the calibrated block first.
+        result = self.post(calibration=dict(FLAT, spacing_m=2)).json()
+        self.assertFalse(result['ok'])
+        self.assertIn('not on the calibrated wall plane', result['reason'])
+
+    def test_validates_route_and_climber(self):
+        self.assertEqual(self.post(route=[0, 1]).status_code, 422)
+        self.assertEqual(self.post(route=[0, 1, 99]).status_code, 400)
+        self.assertEqual(self.post(route=[0, 1, -1]).status_code, 422)
+        self.assertEqual(self.post(height_m=0).status_code, 422)
+        self.assertEqual(self.post(height_m=3).status_code, 422)
+        self.assertEqual(self.post(id='missing').status_code, 404)

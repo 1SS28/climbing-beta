@@ -9,6 +9,9 @@ A climber knows their route and can tap it in seconds, so the prototype asks
 rather than guesses. Automatic grouping belongs on top of this later, as a
 suggestion the climber corrects.
 
+Both /api/measure and /api/beta take the same validated calibration and refuse
+without one. Neither assumes a wall height.
+
 Holds are detected once per photo and cached, because that is the slow step.
 """
 
@@ -17,19 +20,19 @@ import logging
 import uuid
 from pathlib import Path
 from threading import Lock
+from typing import Annotated
 
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps, UnidentifiedImageError
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
-from measurement import Measurement, measure_route
-
 from beta import Climber, find_start, route_chain, search
-from calibrate import calibrate
-from scene import MAX_WALL_M, from_polygons, from_wall_plane, plausible
+from measurement import Calibration, Measurement, holds_from_calibration, measure_route
+from scene import MAX_WALL_M, plausible
 
 ROOT = Path(__file__).resolve().parent
 UPLOADS = ROOT / "data/uploads"
@@ -42,12 +45,29 @@ _detection_lock = Lock()
 _cache: dict[str, dict] = {}
 
 
+class BetaRequest(BaseModel):
+    """A route to climb, on a wall whose scale is known."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    calibration: Calibration
+    route: list[Annotated[int, Field(strict=True, ge=0)]] = Field(min_length=3, max_length=500)
+    height_m: Annotated[float, Field(gt=0.5, le=2.5)] = 1.68
+
+
 def model():
     global _model
     if _model is None:
         from ultralytics import YOLO
         _model = YOLO(str(ROOT / "runs/v1_960_best.pt"))
     return _model
+
+
+def as_holds(pid: str):
+    """Cached detections for a photo, or 404."""
+    if pid not in _cache:
+        raise HTTPException(404, "Unknown photo; upload it again.")
+    return _cache[pid]
 
 
 @app.post("/api/photo")
@@ -91,70 +111,73 @@ async def photo(file: UploadFile = File(...)):
 
 
 @app.post("/api/beta")
-async def beta(payload: dict):
-    """Given chosen holds and a scale, return the move sequence."""
-    pid = payload.get("id")
-    if pid not in _cache:
-        raise HTTPException(404, "unknown photo; upload it again")
-    entry = _cache[pid]
-    polys, (W, H) = entry["polys"], entry["size"]
+async def beta(payload: BetaRequest):
+    """Given chosen holds and a calibration, return the move sequence.
 
-    route = [int(i) for i in payload.get("route", [])]
-    if len(route) < 3:
-        raise HTTPException(400, "pick at least three holds")
+    Hands take the chosen route, feet take every hold the calibration placed on
+    the wall, which is how most gyms set.
+    """
+    entry = as_holds(payload.id)
+    if any(i >= len(entry["polys"]) for i in payload.route):
+        raise HTTPException(400, "Selected hold does not exist; select it again.")
+    try:
+        holds, ids, off_wall, basis, note = holds_from_calibration(
+            payload.calibration, entry["polys"], entry["size"])
+    except (ValueError, np.linalg.LinAlgError) as exc:
+        raise HTTPException(400, str(exc))
 
-    climber = Climber(height=float(payload.get("height_m", 1.68)))
-    corners = payload.get("corners")
-    if corners and len(corners) == 4:
-        cal = calibrate([tuple(c) for c in corners], int(payload["cols"]), int(payload["rows"]),
-                        float(payload.get("spacing_m", 0.1524)), (W, H))
-        holds = from_wall_plane(polys, np.array(cal["H"]))
-        scale_note = f"{cal['metres_per_pixel']*1000:.2f} mm/px from the bolt grid"
-    else:
-        wall_m = float(payload.get("wall_height_m", 4.5))
-        holds = from_polygons(polys, H, wall_m / H)
-        scale_note = f"assuming {wall_m:.1f} m across the frame"
+    def refused(reason):
+        return JSONResponse({"ok": False, "basis": basis, "note": note,
+                             "off_wall": off_wall, "reason": reason}, status_code=200)
 
-    ok, span = plausible(None, H, holds=holds)
+    # The browser selects by detector index; the search works over the holds
+    # that survived calibration, so indices have to be translated both ways.
+    index = {detected: i for i, detected in enumerate(ids)}
+    missing = [i for i in payload.route if i not in index]
+    if missing:
+        return refused(f"holds {missing} are not on the calibrated wall plane. "
+                       "Calibrate on the panel the route is set on, or deselect them.")
+    route = [index[i] for i in payload.route]
+
+    ok, span = plausible(None, entry["size"][1], holds=holds)
     if not ok:
-        return JSONResponse({"ok": False, "scale": scale_note,
-                             "reason": f"that scale puts the holds across {span:.1f} m of wall, "
-                                       f"which is not a boulder (limit {MAX_WALL_M:.0f} m). "
-                                       f"Check the hole spacing or the wall height."},
-                            status_code=200)
+        return refused(f"that calibration puts the holds across {span:.1f} m of wall, "
+                       f"which is not a boulder (limit {MAX_WALL_M:.0f} m). "
+                       "Check the hole spacing or the reference distance.")
 
+    climber = Climber(height=payload.height_m)
     chain, why = route_chain(holds, route, climber)
     if chain is None:
-        return JSONResponse({"ok": False, "reason": why, "scale": scale_note}, status_code=200)
+        return refused(why)
 
     start = find_start(holds, climber, hands=chain)
     if start is None:
-        return JSONResponse({"ok": False, "reason": "no stance fits this climber on these holds",
-                             "scale": scale_note}, status_code=200)
+        return refused("no stance fits this climber on these holds")
     path, info = search(holds, start, chain[-1], c=climber, hands=chain)
     if path is None:
-        return JSONResponse({"ok": False, "reason": str(info), "scale": scale_note}, status_code=200)
+        return refused(str(info))
 
     limbs = ("LH", "RH", "LF", "RF")
+    on_chain = set(chain)
     moves = []
     for a, b in zip(path, path[1:]):
         k = next(i for i in range(4) if a[i] != b[i])
-        moves.append({"limb": limbs[k], "from": int(a[k]), "to": int(b[k]),
+        moves.append({"limb": limbs[k], "from": ids[a[k]], "to": ids[b[k]],
                       "distance_m": round(float(np.linalg.norm(holds[b[k]].pos - holds[a[k]].pos)), 2),
                       "hand": k < 2})
-    return {"ok": True, "scale": scale_note, "cost": round(float(info), 2),
-            "dropped": [h for h in route if h not in chain],
-            "start": {"LH": start[0], "RH": start[1], "LF": start[2], "RF": start[3]},
+    return {"ok": True, "basis": basis, "note": note, "off_wall": off_wall,
+            "cost": round(float(info), 2),
+            "dropped": [i for i in payload.route if index[i] not in on_chain],
+            "start": {limb: ids[start[k]] for k, limb in enumerate(limbs)},
             "moves": moves}
 
 
 @app.post("/api/measure")
 async def measure(payload: Measurement):
     """Measure selected points with an explicit reference; detection is optional."""
-    if payload.id not in _cache:
-        raise HTTPException(404, "Unknown photo; upload it again.")
+    entry = as_holds(payload.id)
     try:
-        return measure_route(payload, _cache[payload.id])
+        return measure_route(payload, entry)
     except (ValueError, np.linalg.LinAlgError) as exc:
         raise HTTPException(400, str(exc))
 
@@ -162,9 +185,7 @@ async def measure(payload: Measurement):
 @app.get("/api/holds/{pid}")
 def holds(pid: str):
     """Holds already detected for a photo, so a reload need not re-detect."""
-    if pid not in _cache:
-        raise HTTPException(404, "unknown photo")
-    entry = _cache[pid]
+    entry = as_holds(pid)
     W, H = entry["size"]
     return {"id": pid, "width": W, "height": H,
             "holds": [{"id": i, "points": p.round(1).tolist(),
