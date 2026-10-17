@@ -63,6 +63,9 @@ with a README there saying what each piece established and why it is not here.
 | --- | --- |
 | `prepare.py` | ClimbInst Labelme JSON to YOLO segmentation format |
 | `train.py` | fine-tune YOLO11-seg |
+| `export_web.py` | export the weights to ONNX for the browser |
+| `app.py` | the deployed API: geometry only, no detector |
+| `public/` | the hosted app, detection included |
 | `wall.py` | homography, wall angle, and image to wall-plane metres |
 | `calibrate.py` | four bolt holes to a wall calibration, saved as JSON |
 | `scene.py` | holds in metric 3D, the platform-neutral representation |
@@ -234,10 +237,53 @@ The trained weights must exist at `runs/v1_960_best.pt`.
 Checks: `.venv/bin/python tests.py` and
 `.venv/bin/python -m unittest test_measurement` (API tests require `httpx`).
 
+## Hosted app
+
+`public/` is a measuring tool a climber can open on their phone, deployed on
+Vercel. Detection runs in the browser and the photo is never uploaded.
+
+That split is forced rather than chosen. The detector cannot be deployed with
+the API: torch is 558 MB against Vercel's 500 MB Python bundle, and there is no
+GPU. So the weights are exported to ONNX and run in the page over WebGPU,
+through onnxruntime-web. Ultralytics' own browser library was tried first and
+panics inside its WASM segmentation path on this model, so `public/detect.js`
+does its own letterboxing and NMS instead. On a 24 MP wall photo it returns
+152 holds where the Python pipeline returns 152, in 0.67s.
+
+The export costs 0.3 points of recall, 96.6% at 1280px against 96.9% for the
+.pt model at 1600px, measured on the test split. `export_web.py` has the table.
+
+What stays in Python is the part worth keeping in one language: the homography,
+the checks that refuse a calibration, and the distances. Those have tests and
+are about to be checked against a tape measure, so they are not reimplemented
+in JS where the two could drift. `app.py` is that API, and it is stateless. The
+browser holds the photo and the detections and sends the points it picked, so
+there is no upload, no cache and no photo id.
+
+Boxes, not masks: `detect.js` ignores the 32 mask coefficients and uses a box
+centre where the Python pipeline uses a mask centroid. On an asymmetric hold
+that differs by a centimetre or two. Worth revisiting once there is a real
+error figure to compare it against.
+
+Run the whole thing locally with one process:
+
+```bash
+.venv/bin/python -m uvicorn app:app --port 8000
+```
+
+Deploying needs a Vercel account:
+
+```bash
+npx vercel deploy --prod
+```
+
+`.vercelignore` keeps the 4.2 GB dataset, the 1.1 GB venv and `runs/` out of
+the upload, which leaves about 39 MB, nearly all of it the model.
+
 ## Running it
 
 ```bash
-uv sync
+uv sync --extra dev
 .venv/bin/python prepare.py
 .venv/bin/python train.py --model yolo11s-seg.pt --epochs 60 --imgsz 960 --batch 6 --name v1_960
 .venv/bin/python -m experiments.v3_beta photo.jpg -1 "150,1750,4.5" 1.68
@@ -245,6 +291,10 @@ uv sync
 
 The last three arguments are the route group (-1 picks the best-scoring one), a
 scale reference given as `y_top,y_bottom,metres`, and climber height in metres.
+
+`--extra dev` is what installs torch, Ultralytics and the export tooling. The
+default dependencies are only what the deployed API needs, because torch alone
+is larger than Vercel's whole Python bundle.
 
 Use `.venv/bin/python` rather than `uv run`. `uv run` re-syncs the environment
 and takes a lock on it, which deadlocks against any other uv process, including

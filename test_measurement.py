@@ -220,3 +220,62 @@ class BetaTests(unittest.TestCase):
         self.assertEqual(self.post(height_m=0).status_code, 422)
         self.assertEqual(self.post(height_m=3).status_code, 422)
         self.assertEqual(self.post(id='missing').status_code, 404)
+
+
+class DeployedApiTests(unittest.TestCase):
+    """The stateless API, which is what Vercel actually runs.
+
+    The detector cannot be deployed with it, so the browser sends the points it
+    picked and the size of the photo they came from. Nothing is stored, so
+    there is no photo id and no cache to miss.
+    """
+
+    def setUp(self):
+        import app
+        self.client = TestClient(app.app)
+        self.body = {'size': [1000, 1000], 'points': [[100, 800], [400, 400]],
+                     'calibration': {'method': 'reference',
+                                     'points': [[0, 0], [1000, 0]], 'metres': 1}}
+
+    def post(self, **changes):
+        return self.client.post('/api/measure', json=dict(self.body, **changes))
+
+    def test_measures_without_any_stored_photo(self):
+        result = self.post()
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(result.json()['gaps'][0]['metres'], .5)
+        self.assertEqual(result.json()['rise_m'], .4)
+
+    def test_grid_removes_perspective(self):
+        H = np.array([[300, 50, 100], [20, -300, 800], [.15, .05, 1]])
+        def project(points):
+            q = np.c_[points, np.ones(len(points))] @ H.T
+            return (q[:, :2] / q[:, 2:]).tolist()
+        grid = {'method': 'grid', 'corners': project([[0, 2], [2, 2], [0, 0], [2, 0]]),
+                'cols': 10, 'rows': 10, 'spacing_m': .2}
+        result = self.post(points=project([[.2, .2], [.8, 1]]), calibration=grid)
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(result.json()['gaps'][0]['metres'], 1)
+
+    def test_still_refuses_to_invent_a_scale(self):
+        body = dict(self.body); body.pop('calibration')
+        self.assertEqual(self.client.post('/api/measure', json=body).status_code, 422)
+        self.assertEqual(self.post(wall_height_m=4.5).status_code, 422)
+        self.assertEqual(self.post(calibration={}).status_code, 422)
+
+    def test_validates_what_the_browser_sends(self):
+        self.assertEqual(self.post(points=[[0, 0]]).status_code, 422)
+        self.assertEqual(self.post(points=[[0, 0], [1001, 0]]).status_code, 400)
+        self.assertEqual(self.post(points=[[0, 0], ['NaN', 2]]).status_code, 422)
+        body = dict(self.body); body.pop('size')
+        self.assertEqual(self.client.post('/api/measure', json=body).status_code, 422)
+
+    def test_serves_the_app_and_the_model(self):
+        self.assertEqual(self.client.get('/api/health').json(), {'ok': True})
+        page = self.client.get('/')
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('Hold Distance', page.text)
+        self.assertIn('ClimbInst', page.text)         # CC BY-NC-SA attribution
+        self.assertIn('AGPL-3.0', page.text)          # AGPL source offer
+        self.assertEqual(self.client.get('/detect.js').status_code, 200)
+        self.assertEqual(self.client.get('/models/holds_1280.onnx').status_code, 200)

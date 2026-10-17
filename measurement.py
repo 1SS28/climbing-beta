@@ -46,6 +46,21 @@ class Grid(BaseModel):
 Calibration = Annotated[Reference | Grid, Field(discriminator="method")]
 
 
+class Span(BaseModel):
+    """A measurement with no photo on the server.
+
+    The browser detects holds and holds on to them, so a deploy needs no upload,
+    no cache and no state: the client sends the pixels it picked and the size of
+    the photo they came from. `size` is still required, because the frame is what
+    bounds a valid point.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    size: tuple[Positive, Positive]
+    calibration: Calibration
+    points: list[Point] = Field(min_length=2, max_length=500)
+
+
 class Measurement(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
@@ -204,12 +219,21 @@ def measure_route(request, entry):
     else:
         pixels = request.points
 
-    to_metres, basis, note = wall_mapping(request.calibration, size)
+    return _report(request.calibration, pixels, size)
+
+
+def measure_points(request: Span):
+    """Measure points the client already has, with no server-side photo."""
+    return _report(request.calibration, request.points, request.size)
+
+
+def _report(calibration, pixels, size):
+    to_metres, basis, note = wall_mapping(calibration, size)
     xy = to_metres(pixels)
     distances = np.linalg.norm(np.diff(xy, axis=0), axis=1)
     rise = float(np.ptp(xy[:, 1]))
     return {
-        "basis": basis, "note": note, "method": request.calibration.method,
+        "basis": basis, "note": note, "method": calibration.method,
         "gaps": [{"from": i, "to": i + 1, "metres": round(float(d), 3)}
                  for i, d in enumerate(distances)],
         "total_m": round(float(distances.sum()), 3),

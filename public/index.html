@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hold Distance</title>
+<meta name="description" content="Measure the distance between climbing holds from one photo of a gym wall.">
+<meta name="theme-color" content="#14161a">
+<style>
+:root { color-scheme:dark; --bg:#14161a; --panel:#1d2026; --ink:#e8eaed; --dim:#a8afb9; --line:#353c47; --accent:#69b2ff; --warm:#ffd082; }
+* { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui,-apple-system,sans-serif;
+       display:flex; flex-direction:column; min-height:100dvh; }
+header { padding:10px 16px; border-bottom:1px solid var(--line); flex:none; }
+h1 { margin:0; font-size:17px; letter-spacing:.2px; }
+#status { margin:2px 0 0; font-size:13px; color:var(--dim); min-height:20px; }
+#stage { flex:1 1 auto; min-height:38dvh; overflow:auto; background:#0e1013; position:relative;
+         display:flex; align-items:center; justify-content:center; }
+#empty { padding:32px 20px; text-align:center; color:var(--dim); font-size:14px; }
+canvas { display:block; cursor:crosshair; }
+#panel { flex:none; max-height:56dvh; overflow-y:auto; background:var(--panel);
+         border-top:1px solid var(--line); padding:14px 16px calc(16px + env(safe-area-inset-bottom)); }
+h2 { font-size:13px; text-transform:uppercase; letter-spacing:.7px; color:var(--dim); margin:0 0 8px; }
+section { padding-bottom:14px; margin-bottom:14px; border-bottom:1px solid var(--line); }
+section:last-of-type { border-bottom:0; }
+p { margin:6px 0; } .dim { color:var(--dim); font-size:13px; }
+button, input, select { font:inherit; min-height:44px; border-radius:8px; border:1px solid var(--line); padding:9px 12px; }
+button { background:#29313c; color:var(--ink); cursor:pointer; }
+button:disabled { opacity:.4; cursor:default; }
+button[aria-pressed=true] { background:var(--accent); color:#071524; font-weight:600; }
+input, select { background:#12151a; color:var(--ink); width:100%; font-size:16px; }
+label { display:block; font-size:12px; color:var(--dim); margin:9px 0 3px; }
+.row { display:flex; gap:8px; } .row > * { flex:1; min-width:0; }
+#measure { width:100%; font-weight:700; background:var(--accent); color:#071524; font-size:16px; margin-top:4px; }
+#measure:disabled { background:#29313c; color:var(--ink); }
+#error { color:#ffb8a5; font-size:14px; } .warning { color:var(--warm); }
+#picked { list-style:none; padding:0; margin:8px 0 0; }
+#picked li { display:flex; align-items:center; gap:8px; padding:4px 0; font-size:14px; }
+#picked span { flex:1; } #picked button { min-height:36px; padding:4px 10px; font-size:13px; }
+#credits a { color:var(--accent); }
+/* The native control reads "No file chosen", which looks unfinished. Keep it
+   reachable for keyboard and assistive tech and drive it from the label. */
+#file { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+.pick { display:block; text-align:center; background:var(--accent); color:#071524;
+        font-weight:700; font-size:16px; padding:13px; border-radius:8px; cursor:pointer; margin:0; }
+#file:disabled + .pick { opacity:.4; cursor:default; }
+#file:focus-visible + .pick { outline:2px solid var(--ink); outline-offset:2px; }
+#total { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; margin:0; }
+#gaps { font-variant-numeric:tabular-nums; padding-left:20px; margin:8px 0 0; font-size:14px; }
+#bar { height:4px; background:var(--line); border-radius:2px; overflow:hidden; margin-top:8px; }
+#bar div { height:100%; width:0; background:var(--accent); transition:width .2s; }
+[hidden] { display:none !important; }
+@media (min-width:900px) {
+  body { flex-direction:row; height:100dvh; }
+  header { position:absolute; top:0; left:0; right:380px; z-index:2; background:#14161aee; }
+  #stage { min-height:0; padding-top:58px; }
+  #panel { width:380px; max-height:none; height:100dvh; border-top:0; border-left:1px solid var(--line); }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Hold Distance</h1>
+  <p id="status" role="status" aria-live="polite">Take or choose a photo of one route on a flat wall.</p>
+</header>
+
+<div id="stage">
+  <p id="empty">Your photo appears here.<br>Holds are found on your phone; the photo is never uploaded.</p>
+  <canvas id="c" hidden aria-label="Wall photo. Tap to pick holds or reference points."></canvas>
+</div>
+
+<div id="panel">
+  <section>
+    <h2>1 · Photo</h2>
+    <input type="file" id="file" accept="image/*" capture="environment">
+    <label class="pick" for="file">Take or choose a photo</label>
+    <div id="bar" hidden><div></div></div>
+    <p id="found" class="dim"></p>
+  </section>
+
+  <section>
+    <h2>2 · Scale</h2>
+    <select id="method" aria-label="How to set the scale">
+      <option value="grid">Bolt holes · corrects perspective</option>
+      <option value="reference">Known distance · straight-on only</option>
+    </select>
+    <div id="grid-fields">
+      <p class="dim">Tap four bolt holes as far apart as you can, on one flat panel: top-left, top-right, bottom-left, bottom-right.</p>
+      <div class="row">
+        <div><label for="cols">Gaps across</label><input id="cols" type="number" min="1" step="1" inputmode="numeric" placeholder="8"></div>
+        <div><label for="rows">Gaps up</label><input id="rows" type="number" min="1" step="1" inputmode="numeric" placeholder="8"></div>
+      </div>
+      <label for="spacing">Bolt spacing (m)</label>
+      <input id="spacing" type="number" min="0.001" step="any" inputmode="decimal" value="0.1524">
+      <p class="dim">Count the spaces, not the holes: 9 holes is 8 gaps. Measure your gym's spacing once; 6 in against 8 in is a 33% error on everything.</p>
+    </div>
+    <div id="reference-fields" hidden>
+      <p class="dim">Tap two points a known distance apart on the wall. This does not correct perspective, so shoot square on.</p>
+      <label for="metres">Distance apart (m)</label>
+      <input id="metres" type="number" min="0.001" step="any" inputmode="decimal" placeholder="1.2">
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="calibrate" disabled>Tap reference</button>
+      <button id="undo-ref" disabled>Undo</button>
+    </div>
+    <p id="cal-status" class="dim">0 of 4 reference points</p>
+  </section>
+
+  <section>
+    <h2>3 · Route</h2>
+    <div class="row">
+      <button id="select" aria-pressed="true" disabled>Pick holds</button>
+      <button id="manual" aria-pressed="false" disabled>Add point</button>
+    </div>
+    <ol id="picked"></ol>
+    <div class="row" style="margin-top:8px">
+      <button id="undo" disabled>Undo</button>
+      <button id="clear" disabled>Clear</button>
+    </div>
+  </section>
+
+  <button id="measure" disabled>Measure</button>
+  <p id="ready" class="dim">Add a photo to begin.</p>
+  <p id="error" role="alert"></p>
+
+  <section id="out" hidden>
+    <h2>Distances</h2>
+    <p id="total"></p>
+    <p id="basis" class="dim"></p>
+    <ol id="gaps"></ol>
+    <p id="note" class="dim"></p>
+  </section>
+  <section id="credits">
+    <h2>Credits</h2>
+    <p class="dim">Holds are found by a YOLO11 model trained on
+      <a href="https://huggingface.co/datasets/ClimbVision/ClimbInst">ClimbInst</a>
+      (CC BY-NC-SA 4.0). Built with <a href="https://github.com/ultralytics/ultralytics">Ultralytics</a>
+      YOLO11, AGPL-3.0. This is a non-commercial demonstration; the
+      <a href="https://github.com/1SS28/climbing-beta">complete source</a> is public under AGPL-3.0.</p>
+  </section>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

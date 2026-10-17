@@ -1,0 +1,5 @@
+# Deployed API only. The detector runs in the browser, so nothing here needs
+# torch or ultralytics; see pyproject.toml's dev extra for the local toolchain.
+numpy>=2.0
+fastapi>=0.115
+pydantic>=2.0

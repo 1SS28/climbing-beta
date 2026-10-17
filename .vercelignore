@@ -1,0 +1,8 @@
+.venv
+data
+runs
+out
+experiments
+static
+__pycache__
+*.pyc

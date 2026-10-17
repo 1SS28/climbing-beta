@@ -4,17 +4,24 @@ version = "0.1.0"
 description = "Detect climbing holds in gym wall photos and search for a plausible beta."
 requires-python = ">=3.12"
 dependencies = [
+    "numpy>=2.0",
+    "fastapi>=0.115",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
     "torch>=2.6",
     "torchvision>=0.21",
-    "numpy>=2.0",
     "pillow>=11.0",
     "matplotlib>=3.9",
     "huggingface-hub>=0.28",
     "ultralytics>=8.3",
-    "fastapi>=0.115",
-    "pydantic>=2.0",
     "uvicorn>=0.34",
     "python-multipart>=0.0.20",
+    "onnx>=1.17",
+    "onnxruntime>=1.20",
+    "httpx",
 ]
 
 [tool.uv]
