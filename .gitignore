@@ -10,3 +10,4 @@ runs_full.log
 runs_960.log
 !data/**/*.calib.json
 data/uploads/
+.vercel
