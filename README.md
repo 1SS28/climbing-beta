@@ -240,6 +240,8 @@ Checks: `.venv/bin/python tests.py` and
 
 ## Hosted app
 
+Live at https://climbing-beta-theta.vercel.app
+
 `public/` is a measuring tool a climber can open on their phone, deployed on
 Vercel. Detection runs in the browser and the photo is never uploaded.
 
@@ -305,7 +307,10 @@ npx vercel deploy --prod
 ```
 
 `.vercelignore` keeps the 4.2 GB dataset, the 1.1 GB venv and `runs/` out of
-the upload, which leaves about 39 MB, nearly all of it the model.
+the upload, which leaves about 39 MB, nearly all of it the model. Vercel
+installs from `uv.lock`, so the lock has to be regenerated whenever the
+dependencies move: a stale one still listing torch made the first deploy 5.8 GB
+against a 500 MB limit.
 
 ## Running it
 
