@@ -46,7 +46,14 @@ label { display:block; font-size:12px; color:var(--dim); margin:9px 0 3px; }
 #file:disabled + .pick { opacity:.4; cursor:default; }
 #file:focus-visible + .pick { outline:2px solid var(--ink); outline-offset:2px; }
 #total { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; margin:0; }
-#gaps { font-variant-numeric:tabular-nums; padding-left:20px; margin:8px 0 0; font-size:14px; }
+#gaps { font-variant-numeric:tabular-nums; padding-left:20px; margin:8px 0; font-size:14px; }
+#gaps li { margin:6px 0; }
+#gaps .gap { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+#gaps .gap span:first-child { min-width:96px; }
+#gaps input { width:92px; flex:none; min-height:38px; padding:6px 8px; }
+#gaps .err { font-size:13px; color:var(--dim); }
+#gaps .err.bad { color:var(--warm); }
+#tape-summary { font-weight:600; font-variant-numeric:tabular-nums; }
 #bar { height:4px; background:var(--line); border-radius:2px; overflow:hidden; margin-top:8px; }
 #bar div { height:100%; width:0; background:var(--accent); transition:width .2s; }
 [hidden] { display:none !important; }
@@ -127,8 +134,16 @@ label { display:block; font-size:12px; color:var(--dim); margin:9px 0 3px; }
     <h2>Distances</h2>
     <p id="total"></p>
     <p id="basis" class="dim"></p>
-    <ol id="gaps"></ol>
+    <p id="warning" class="warning" hidden></p>
     <p id="note" class="dim"></p>
+    <h2 style="margin-top:14px">Check against a tape measure</h2>
+    <p class="dim">Measure hold centre to hold centre and type it beside each gap. Nothing leaves your phone unless you save it.</p>
+    <label for="tape-unit">Tape reads in</label>
+    <select id="tape-unit"><option value="in">inches</option><option value="cm">centimetres</option></select>
+    <ol id="gaps"></ol>
+    <p id="tape-summary"></p>
+    <button id="save" style="width:100%">Save this check</button>
+    <p class="dim">Saves one file with the photo, your taps and the measurements, ready to send.</p>
   </section>
   <section id="credits">
     <h2>Credits</h2>

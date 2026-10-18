@@ -279,3 +279,76 @@ class DeployedApiTests(unittest.TestCase):
         self.assertIn('AGPL-3.0', page.text)          # AGPL source offer
         self.assertEqual(self.client.get('/detect.js').status_code, 200)
         self.assertEqual(self.client.get('/models/holds_1280.onnx').status_code, 200)
+
+
+class CheckTests(unittest.TestCase):
+    """check.py, which turns checks saved at the gym into an error figure."""
+
+    ROUTE = [pixel(.2, .2), pixel(.8, 1), pixel(1.5, 1.2), pixel(.5, 1.8)]
+
+    def saved(self, calibration, tape_from=None, tape=None):
+        """A check as the app would save it, measured under `calibration`.
+
+        The tape reads the truth, which is the same taps measured under
+        `tape_from`, or the given readings."""
+        import check
+        def run(cal):
+            return measurement.measure_points(measurement.Span(
+                size=FLAT_SIZE, calibration=cal, points=self.ROUTE))
+        result = run(calibration)
+        if tape is None:
+            tape = [g['metres'] for g in run(tape_from or calibration)['gaps']]
+        record = {'app': 'hold-distance', 'version': 1,
+                  'photo': {'width': FLAT_SIZE[0], 'height': FLAT_SIZE[1], 'jpeg': 'data:,'},
+                  'calibration': calibration,
+                  'points': [{'xy': p, 'hold': None} for p in self.ROUTE],
+                  'result': result,
+                  'tape': [{'from': g['from'], 'to': g['to'], 'measured_m': g['metres'],
+                            'tape_m': t, 'unit': 'cm'} for g, t in zip(result['gaps'], tape)]}
+        return check, record
+
+    def test_a_right_measurement_scores_near_zero(self):
+        check, rec = self.saved(FLAT)
+        rows, failed, v = check.score([('a', rec)])
+        self.assertEqual((failed, v['n']), ([], 3))
+        self.assertLess(v['mean_abs'], .2)       # only the API's millimetre rounding
+        self.assertFalse(v['scale_error'])
+
+    def test_six_inch_spacing_on_an_eight_inch_wall_is_named(self):
+        six = dict(FLAT, spacing_m=.1524)
+        check, rec = self.saved(six, tape_from=dict(FLAT, spacing_m=.2032))
+        _, _, v = check.score([('a', rec)])
+        self.assertAlmostEqual(v['mean_abs'], 25, delta=.5)
+        self.assertTrue(v['scale_error'])
+        self.assertAlmostEqual(v['factor'], 4 / 3, places=2)
+        self.assertEqual(v['nearest'], '8in')
+        self.assertLess(v['mean_abs_after'], .5)
+
+    def test_a_miscounted_grid_is_not_mistaken_for_a_spacing(self):
+        eight = dict(FLAT, cols=8, rows=8, spacing_m=.1524)
+        check, rec = self.saved(eight, tape_from=dict(eight, cols=9, rows=9))
+        _, _, v = check.score([('a', rec)])
+        self.assertTrue(v['scale_error'])
+        self.assertAlmostEqual(v['factor'], 9 / 8, places=2)
+        self.assertIsNone(v['nearest'])          # 171 mm is no gym's spacing
+
+    def test_tapping_scatter_is_not_called_a_scale_error(self):
+        check, truth = self.saved(FLAT)
+        noisy = [g['measured_m'] * f for g, f in zip(truth['tape'], (1.03, .98, 1.01))]
+        _, rec = self.saved(FLAT, tape=noisy)
+        _, _, v = check.score([('a', rec)])
+        self.assertFalse(v['scale_error'])
+        self.assertAlmostEqual(v['mean_abs'], 2, delta=.3)
+
+    def test_a_file_that_does_not_reproduce_is_set_aside(self):
+        check, rec = self.saved(FLAT)
+        rec['result']['gaps'][0]['metres'] += .05
+        rows, failed, v = check.score([('tampered', rec)])
+        self.assertEqual((failed, rows, v['n']), (['tampered'], [], 0))
+
+    def test_two_gaps_are_too_few_to_blame_the_scale(self):
+        check, rec = self.saved(FLAT, tape_from=dict(FLAT, spacing_m=.3))
+        rec['tape'][2]['tape_m'] = None
+        _, _, v = check.score([('a', rec)])
+        self.assertEqual(v['n'], 2)
+        self.assertNotIn('factor', v)

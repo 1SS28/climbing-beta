@@ -65,6 +65,7 @@ with a README there saying what each piece established and why it is not here.
 | `train.py` | fine-tune YOLO11-seg |
 | `export_web.py` | export the weights to ONNX for the browser |
 | `app.py` | the deployed API: geometry only, no detector |
+| `check.py` | score tape-measure checks saved from the app |
 | `public/` | the hosted app, detection included |
 | `wall.py` | homography, wall angle, and image to wall-plane metres |
 | `calibrate.py` | four bolt holes to a wall calibration, saved as JSON |
@@ -264,6 +265,32 @@ Boxes, not masks: `detect.js` ignores the 32 mask coefficients and uses a box
 centre where the Python pipeline uses a mask centroid. On an asymmetric hold
 that differs by a centimetre or two. Worth revisiting once there is a real
 error figure to compare it against.
+
+### Checking it against a tape measure
+
+No distance this project produces has been checked against a real one yet, so
+the app collects that check where it happens. After measuring, type what the
+tape reads beside each gap (inches or centimetres) and the app shows the error
+on the spot. Save this check writes one file with the photo, the taps, the
+calibration, the measurement and the tape readings, and on a phone it opens the
+share sheet so the file can be sent straight on.
+
+Written down by hand, a reading has to be matched to the right pair of taps
+afterwards from a description like "blue jug to pink crimp", which is where
+ground truth goes wrong. Saved with the taps, it cannot.
+
+```bash
+.venv/bin/python check.py hold-distance-*.json --photos
+```
+
+`check.py` reruns every saved measurement through the API's own code and sets
+aside any file that does not reproduce, then reports the error. It also
+separates the two causes. A wrong bolt spacing or a miscounted grid scales
+every gap by one factor, so tape over measured holds steady; tapping error
+scatters. With three or more gaps it says which, and when it is the scale, what
+spacing would fit: 6 inches entered on an 8 inch wall comes back as a
+consistent x1.333 and names 8 in, while a grid miscounted by one comes back as
+a spacing no gym uses and says to recount.
 
 Run the whole thing locally with one process:
 

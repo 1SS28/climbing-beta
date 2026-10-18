@@ -23,6 +23,10 @@ let busy = false;
 let revision = 0;
 let view = 1;
 let detector = null;
+let last = null;           // the last measurement, as the API returned it
+let tape = [];             // what the climber's tape measure read, per gap, in metres
+
+const PER_UNIT = { in: 0.0254, cm: 0.01 };
 
 const refsNeeded = () => ($("#method").value === "grid" ? 4 : 2);
 const number = (id) => {
@@ -80,6 +84,8 @@ const reset = () => { moving = null; mode = "select"; };
 function changed() {
   revision++;
   gaps = [];
+  last = null;
+  tape = [];
   $("#out").hidden = true;
   $("#error").textContent = "";
   update();
@@ -310,19 +316,11 @@ $("#measure").onclick = async () => {
     $("#total").textContent = `${result.total_m.toFixed(2)} m total · ${result.rise_m.toFixed(2)} m rise`;
     $("#basis").textContent = result.basis;
     $("#note").textContent = result.note;
-    const list = $("#gaps");
-    list.replaceChildren();
-    for (const g of gaps) {
-      const li = document.createElement("li");
-      li.textContent = `${g.from + 1} → ${g.to + 1}: ${g.metres.toFixed(2)} m`;
-      list.append(li);
-    }
-    if (result.warning) {
-      const p = document.createElement("li");
-      p.className = "warning";
-      p.textContent = result.warning;
-      list.append(p);
-    }
+    $("#warning").hidden = !result.warning;
+    $("#warning").textContent = result.warning || "";
+    last = result;
+    tape = gaps.map(() => null);
+    showGaps();
     say("Done. Move a point or change the scale to measure again.");
   } catch (err) {
     if (version === revision) {
@@ -333,6 +331,105 @@ $("#measure").onclick = async () => {
     busy = false;
     update();
   }
+};
+
+/* Ground truth, collected where it is measured. Written down by hand, a tape
+   reading has to be matched to the right pair of taps afterwards from a
+   description like "blue jug to pink crimp", which is where it goes wrong. */
+function showGaps() {
+  const list = $("#gaps");
+  list.replaceChildren();
+  gaps.forEach((g, i) => {
+    const li = document.createElement("li");
+    const row = document.createElement("div");
+    row.className = "gap";
+    const label = document.createElement("span");
+    label.textContent = `${g.from + 1} → ${g.to + 1}: ${g.metres.toFixed(2)} m`;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "0";
+    input.step = "any";
+    input.inputMode = "decimal";
+    input.placeholder = "tape";
+    input.setAttribute("aria-label", `Tape measure from point ${g.from + 1} to ${g.to + 1}`);
+    const err = document.createElement("span");
+    err.className = "err";
+    input.oninput = () => {
+      const v = +input.value;
+      tape[i] = input.value !== "" && Number.isFinite(v) && v > 0 ? v * PER_UNIT[$("#tape-unit").value] : null;
+      scoreGaps();
+    };
+    row.append(label, input, err);
+    li.append(row);
+    list.append(li);
+  });
+  scoreGaps();
+}
+
+function scoreGaps() {
+  const rows = [...$("#gaps").querySelectorAll(".err")];
+  const errors = [];
+  gaps.forEach((g, i) => {
+    if (tape[i] == null) { rows[i].textContent = ""; return; }
+    const off = g.metres - tape[i];
+    const pct = (off / tape[i]) * 100;
+    errors.push(Math.abs(pct));
+    rows[i].textContent = `${off >= 0 ? "+" : "−"}${Math.abs(off * 100).toFixed(1)} cm (${pct >= 0 ? "+" : "−"}${Math.abs(pct).toFixed(1)}%)`;
+    rows[i].classList.toggle("bad", Math.abs(pct) > 10);
+  });
+  $("#tape-summary").textContent = errors.length
+    ? `${errors.length} checked · mean error ${(errors.reduce((a, b) => a + b, 0) / errors.length).toFixed(1)}% · worst ${Math.max(...errors).toFixed(1)}%`
+    : "";
+}
+
+$("#tape-unit").onchange = () => {
+  // Re-read every box in the new unit rather than converting what was typed.
+  [...$("#gaps").querySelectorAll("input")].forEach((input) => input.oninput());
+};
+
+$("#save").onclick = async () => {
+  if (!last || !photo) return;
+  const jpeg = await photo.convertToBlob({ type: "image/jpeg", quality: 0.9 });
+  const photoData = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(jpeg);
+  });
+  const unit = $("#tape-unit").value;
+  const round = (v) => Math.round(v * 10) / 10;
+  const record = {
+    app: "hold-distance",
+    version: 1,
+    saved: new Date().toISOString(),
+    // Every coordinate below is in this copy of the photo, not the original.
+    photo: { width: photo.width, height: photo.height, jpeg: photoData },
+    detector: detector ? detector.device : null,
+    holds: holds.map((h) => h.box.map(round)),
+    calibration: $("#method").value === "grid"
+      ? { method: "grid", corners: refs, cols: number("#cols"), rows: number("#rows"), spacing_m: number("#spacing") }
+      : { method: "reference", points: refs, metres: number("#metres") },
+    // Exactly what the API was sent, so the measurement can be rerun to the digit.
+    points: picks.map((p) => ({ xy: p.xy, hold: p.hold })),
+    result: last,
+    tape: gaps.map((g, i) => ({ from: g.from, to: g.to, measured_m: g.metres,
+                                 tape_m: tape[i], unit })),
+  };
+  const stamp = record.saved.slice(0, 16).replace(/[-:T]/g, "");
+  const file = new File([JSON.stringify(record)], `hold-distance-${stamp}.json`,
+                        { type: "application/json" });
+  // On a phone the share sheet is the natural way to send it on; elsewhere,
+  // a plain download.
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: "Hold distance check" }); return; }
+    catch (err) { if (err.name === "AbortError") return; }
+  }
+  const url = URL.createObjectURL(file);
+  const a = Object.assign(document.createElement("a"), { href: url, download: file.name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
 update();
