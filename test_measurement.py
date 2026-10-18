@@ -270,6 +270,18 @@ class DeployedApiTests(unittest.TestCase):
         body = dict(self.body); body.pop('size')
         self.assertEqual(self.client.post('/api/measure', json=body).status_code, 422)
 
+    def test_starts_without_the_page_beside_it(self):
+        # Vercel serves public/ from its CDN and leaves it out of the function,
+        # which is how the first deploy failed every call at import.
+        import shutil, subprocess, sys, tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            for f in ('app.py', 'measurement.py', 'calibrate.py', 'scene.py', 'wall.py'):
+                shutil.copy(f, tmp)
+            probe = ("from fastapi.testclient import TestClient; import app; "
+                     "c = TestClient(app.app); print(c.get('/api/health').status_code)")
+            run = subprocess.run([sys.executable, '-c', probe], cwd=tmp, capture_output=True, text=True)
+        self.assertEqual(run.stdout.strip(), '200', run.stderr[-500:])
+
     def test_serves_the_app_and_the_model(self):
         self.assertEqual(self.client.get('/api/health').json(), {'ok': True})
         page = self.client.get('/')

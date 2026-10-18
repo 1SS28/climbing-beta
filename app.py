@@ -64,7 +64,8 @@ def health():
     return {"ok": True}
 
 
-# Vercel serves public/ from its CDN, so this mount normally never runs. It
-# exists so `uvicorn app:app` is the whole app locally, and so a deploy that
-# routes everything here still works.
-app.mount("/", StaticFiles(directory=PUBLIC, html=True), name="public")
+# Locally this serves the page, so `uvicorn app:app` is the whole app. On Vercel
+# public/ goes to the CDN and is not in the function's filesystem at all, and
+# mounting it regardless failed every API call at import.
+if PUBLIC.is_dir():
+    app.mount("/", StaticFiles(directory=PUBLIC, html=True), name="public")
