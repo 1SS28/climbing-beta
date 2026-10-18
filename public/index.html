@@ -33,7 +33,10 @@ h1 { margin: 0; font-size: 17px; font-weight: 750; letter-spacing: -.01em; line-
 #status { margin: 1px 0 0; font-size: 13px; color: var(--dim); line-height: 1.35; }
 
 /* The backdrop is a dot lattice, like the bolt holes the scale is read from. */
-#stage { flex: 1 1 auto; min-height: 42dvh; overflow: auto; position: relative;
+/* Sized by the screen, never by the photo: with an auto basis the stage took
+   the canvas's height, the canvas was fitted to the stage, and after a
+   rotation the photo stayed locked at its old size. */
+#stage { flex: 1 1 0; min-height: 40dvh; overflow: auto; position: relative;
          display: flex; align-items: center; justify-content: center; padding: 8px 12px 28px;
          background: radial-gradient(circle, rgba(255,255,255,.07) 1.1px, transparent 1.5px) 0 0 / 22px 22px,
                      linear-gradient(180deg, #0f1318, #0b0e12); }
@@ -52,7 +55,7 @@ canvas { display: block; cursor: crosshair; border-radius: 10px;
 .private svg { width: 13px; height: 13px; display: inline; vertical-align: -2px; margin-right: 4px; }
 
 /* On a phone the controls sit in a sheet over the bottom of the photo. */
-#panel { flex: none; max-height: 58dvh; overflow-y: auto; position: relative; z-index: 1;
+#panel { flex: none; max-height: 46dvh; overflow-y: auto; position: relative; z-index: 1;
          background: var(--surface); border-radius: 20px 20px 0 0; margin-top: -18px;
          box-shadow: 0 -14px 34px rgba(0,0,0,.4);
          padding: 8px 14px calc(18px + env(safe-area-inset-bottom)); }
@@ -163,8 +166,14 @@ label { display: block; font-size: 12px; font-weight: 550; color: var(--dim); ma
 #save { width: 100%; margin-top: 6px; }
 #credits { font-size: 12px; color: var(--dim); padding: 6px 4px 0; margin: 0; }
 
-@media (min-width: 900px) {
-  body { display: grid; grid-template-columns: minmax(0, 1fr) 400px; grid-template-rows: auto minmax(0, 1fr); height: 100dvh; }
+/* Side by side whenever the screen is wider than tall. Width alone gets it
+   wrong both ways: a phone held sideways is wide, but stacked, its controls
+   fall below the fold and the photo scrolls away while you tap them; a narrow
+   portrait window is not, and side by side would shrink the photo to a
+   seventh of the area it gets stacked. */
+@media (min-width: 600px) and (orientation: landscape), (min-width: 1100px) {
+  body { display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 36vw, 400px);
+         grid-template-rows: auto minmax(0, 1fr); height: 100dvh; min-height: 0; }
   header { grid-column: 1; grid-row: 1; padding: 18px 24px 8px; }
   #stage { grid-column: 1; grid-row: 2; min-height: 0; padding: 12px 24px 24px; }
   #empty svg { max-height: 30dvh; }

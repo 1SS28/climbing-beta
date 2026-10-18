@@ -16,6 +16,9 @@ Measured on the 50-image test split at conf 0.15:
 
 1280 costs 0.3 points against the local server and runs in 0.67s on a 24 MP
 photo over WebGPU. Exporting is not retraining, so the weights are unchanged.
+
+Browsers keep the model for a year, so new weights must ship under a new
+filename, or phones that already have the old one will go on using it.
 """
 
 import shutil

@@ -25,6 +25,7 @@ let view = 1;
 let detector = null;
 let last = null;           // the last measurement, as the API returned it
 let tape = [];             // what the climber's tape measure read, per gap, in metres
+let shown = null;          // the step last brought into view
 
 const PER_UNIT = { in: 0.0254, cm: 0.01 };
 // Route, calibration and distance each get their own colour on the photo.
@@ -60,12 +61,19 @@ function update() {
   $("#route-status").textContent = picks.length ? `${picks.length} picked` : "";
 
   // One step at a time is highlighted: the first that is not done yet.
-  let current = false;
+  let current = null;
   for (const [id, done] of [["step-photo", !!photo], ["step-scale", calibrated()],
                             ["step-route", picks.length >= 2 && !!last]]) {
     const state = done ? "done" : current ? "todo" : "active";
-    if (state === "active") current = true;
+    if (state === "active") current = id;
     $("#" + id).dataset.state = state;
+  }
+  // The sheet is short on a phone, so bring the next step into it, but only
+  // when the step changes, never while the climber is scrolling it themselves.
+  if (current && current !== shown) {
+    const panel = $("#panel"), card = $("#" + current);
+    if (shown) panel.scrollTo({ top: card.offsetTop - 8, behavior: "smooth" });
+    shown = current;
   }
   $("#ready").textContent = !photo ? "Add a photo to begin."
     : !calibrated() ? "Set the scale: tap the reference points and fill in the real numbers."
@@ -81,7 +89,7 @@ function update() {
     badge.textContent = i + 1;
     const label = document.createElement("span");
     label.className = "what";
-    label.textContent = p.hold == null ? "Placed by hand" : "Detected hold";
+    label.textContent = p.hold == null ? "By hand" : "Detected";
     li.append(badge, label);
     for (const [text, act] of [
       ["Move", () => { moving = i; mode = "move"; say(`Tap where point ${i + 1} belongs.`); update(); }],

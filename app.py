@@ -31,6 +31,25 @@ app = FastAPI(title="climbing-beta", docs_url=None, redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
+@app.middleware("http")
+async def caching(request, call_next):
+    """Revalidate the page and scripts every time; keep the model for a year.
+
+    Without a header the browser guesses, and a guess kept a stale app.js
+    running against a new index.html. The model is 41 MB and changes only on
+    retraining, which ships under a new filename, so it can be cached for good.
+    On Vercel the CDN already revalidates static files, and vercel.json adds
+    the long cache for the model.
+    """
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/models/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif not path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.post("/api/measure")
 def measure(payload: Span):
     """Distances along the wall between the points the climber picked."""
