@@ -27,8 +27,14 @@ let last = null;           // the last measurement, as the API returned it
 let tape = [];             // what the climber's tape measure read, per gap, in metres
 
 const PER_UNIT = { in: 0.0254, cm: 0.01 };
+// Route, calibration and distance each get their own colour on the photo.
+const COLOUR = { route: "#3ddc97", routeInk: "#052417", ref: "#b794ff", gap: "#ffc65c",
+                 gapInk: "#2a1d00", shadow: "rgba(8,11,15,.9)" };
 
-const refsNeeded = () => ($("#method").value === "grid" ? 4 : 2);
+const checked = (name) => document.querySelector(`input[name="${name}"]:checked`).value;
+const method = () => checked("method");
+const unit = () => checked("unit");
+const refsNeeded = () => (method() === "grid" ? 4 : 2);
 const number = (id) => {
   const v = +$(id).value;
   return Number.isFinite(v) && v > 0 ? v : null;
@@ -36,7 +42,7 @@ const number = (id) => {
 
 function calibrated() {
   if (refs.length !== refsNeeded()) return false;
-  if ($("#method").value === "reference") return number("#metres") !== null;
+  if (method() === "reference") return number("#metres") !== null;
   return number("#spacing") !== null && Number.isInteger(number("#cols")) &&
          Number.isInteger(number("#rows"));
 }
@@ -50,7 +56,17 @@ function update() {
   $("#measure").disabled = !live || picks.length < 2 || !calibrated();
   $("#select").setAttribute("aria-pressed", mode === "select");
   $("#manual").setAttribute("aria-pressed", mode === "manual");
-  $("#cal-status").textContent = `${refs.length} of ${refsNeeded()} reference points`;
+  $("#cal-status").textContent = `${refs.length} of ${refsNeeded()}`;
+  $("#route-status").textContent = picks.length ? `${picks.length} picked` : "";
+
+  // One step at a time is highlighted: the first that is not done yet.
+  let current = false;
+  for (const [id, done] of [["step-photo", !!photo], ["step-scale", calibrated()],
+                            ["step-route", picks.length >= 2 && !!last]]) {
+    const state = done ? "done" : current ? "todo" : "active";
+    if (state === "active") current = true;
+    $("#" + id).dataset.state = state;
+  }
   $("#ready").textContent = !photo ? "Add a photo to begin."
     : !calibrated() ? "Set the scale: tap the reference points and fill in the real numbers."
     : picks.length < 2 ? "Tap at least two holds."
@@ -60,9 +76,13 @@ function update() {
   list.replaceChildren();
   picks.forEach((p, i) => {
     const li = document.createElement("li");
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.textContent = i + 1;
     const label = document.createElement("span");
-    label.textContent = `${i + 1}. ${p.hold == null ? "point" : "hold"}`;
-    li.append(label);
+    label.className = "what";
+    label.textContent = p.hold == null ? "Placed by hand" : "Detected hold";
+    li.append(badge, label);
     for (const [text, act] of [
       ["Move", () => { moving = i; mode = "move"; say(`Tap where point ${i + 1} belongs.`); update(); }],
       ["Remove", () => { picks.splice(i, 1); reset(); changed(); }],
@@ -92,58 +112,108 @@ function changed() {
   draw();
 }
 
-function plaque(text, x, y, k, colour) {
-  ctx.font = `600 ${13 * k}px system-ui`;
-  const w = ctx.measureText(text).width;
-  ctx.fillStyle = "#10141deb";
-  ctx.fillRect(x - 4 * k, y - 15 * k, w + 8 * k, 21 * k);
-  ctx.fillStyle = colour;
-  ctx.fillText(text, x, y);
+function shape(x, y, w, h, r) {
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y, w, h, r);
+  else ctx.rect(x, y, w, h);
+}
+
+function pill(text, x, y, k, fill, ink) {
+  ctx.font = `800 ${12 * k}px -apple-system, system-ui, sans-serif`;
+  const w = ctx.measureText(text).width + 14 * k, h = 20 * k;
+  shape(x - w / 2, y - h / 2, w, h, h / 2);
+  ctx.fillStyle = COLOUR.shadow;
+  ctx.lineWidth = 3 * k;
+  ctx.strokeStyle = COLOUR.shadow;
+  ctx.stroke();
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.fillStyle = ink;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, x, y + 0.5 * k);
+}
+
+// A dark line under a coloured one keeps it readable over any wall.
+function stroke(points, colour, width, k) {
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const [style, w] of [[COLOUR.shadow, width + 3], [colour, width]]) {
+    ctx.strokeStyle = style;
+    ctx.lineWidth = w * k;
+    ctx.beginPath();
+    points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.stroke();
+  }
 }
 
 function draw() {
   if (!photo) return;
   ctx.drawImage(photo, 0, 0);
   const k = 1 / view;
+  const chosen = new Set(picks.map((p) => p.hold));
 
-  ctx.lineWidth = 1.5 * k;
-  ctx.strokeStyle = "#ffffff55";
   for (const h of holds) {
     const [x1, y1, x2, y2] = h.box;
-    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    shape(x1, y1, x2 - x1, y2 - y1, 5 * k);
+    if (chosen.has(h.id)) {
+      ctx.fillStyle = "rgba(61,220,151,.22)";
+      ctx.fill();
+      ctx.strokeStyle = COLOUR.route;
+      ctx.lineWidth = 2 * k;
+    } else {
+      ctx.strokeStyle = "rgba(255,255,255,.32)";
+      ctx.lineWidth = 1.2 * k;
+    }
+    ctx.stroke();
   }
+
+  for (const g of gaps) stroke([picks[g.from].xy, picks[g.to].xy], COLOUR.gap, 2.5, k);
+
+  // Reference points as crosshairs: they are aimed at a bolt hole, not a hold.
+  const names = refsNeeded() === 4 ? ["TL", "TR", "BL", "BR"] : ["A", "B"];
+  refs.forEach(([x, y], i) => {
+    for (const [style, w] of [[COLOUR.shadow, 4.5], [COLOUR.ref, 2]]) {
+      ctx.strokeStyle = style;
+      ctx.lineWidth = w * k;
+      ctx.beginPath();
+      ctx.arc(x, y, 8 * k, 0, Math.PI * 2);
+      for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+        ctx.moveTo(x + dx * 11 * k, y + dy * 11 * k);
+        ctx.lineTo(x + dx * 16 * k, y + dy * 16 * k);
+      }
+      ctx.stroke();
+    }
+    pill(names[i], x, y - 28 * k, k, COLOUR.ref, "#1c0f33");
+  });
 
   for (const g of gaps) {
     const a = picks[g.from].xy, b = picks[g.to].xy;
-    ctx.strokeStyle = "#ffd082";
-    ctx.lineWidth = 2.5 * k;
-    ctx.beginPath();
-    ctx.moveTo(...a);
-    ctx.lineTo(...b);
-    ctx.stroke();
-    plaque(`${g.metres.toFixed(2)} m`, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, k, "#ffd082");
+    pill(`${g.metres.toFixed(2)} m`, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, k, COLOUR.gap, COLOUR.gapInk);
   }
 
-  const names = refsNeeded() === 4 ? ["TL", "TR", "BL", "BR"] : ["A", "B"];
-  for (const [points, colour, labels] of [
-    [picks.map((p) => p.xy), "#69b2ff", null],
-    [refs, "#ffd082", names],
-  ]) {
-    points.forEach(([x, y], i) => {
-      ctx.strokeStyle = colour;
-      ctx.lineWidth = 2.5 * k;
-      ctx.beginPath();
-      ctx.arc(x, y, 7 * k, 0, Math.PI * 2);
-      ctx.stroke();
-      plaque(labels ? labels[i] : String(i + 1), x + 10 * k, y - 10 * k, k, colour);
-    });
-  }
+  picks.forEach(({ xy: [x, y] }, i) => {
+    ctx.beginPath();
+    ctx.arc(x, y, 11 * k, 0, Math.PI * 2);
+    ctx.fillStyle = COLOUR.route;
+    ctx.fill();
+    ctx.lineWidth = 2.5 * k;
+    ctx.strokeStyle = COLOUR.shadow;
+    ctx.stroke();
+    ctx.fillStyle = COLOUR.routeInk;
+    ctx.font = `800 ${12 * k}px -apple-system, system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(i + 1), x, y + 0.5 * k);
+  });
 }
 
 function fit() {
   if (!photo) return;
   const stage = $("#stage");
-  const w = stage.clientWidth, h = stage.clientHeight;
+  const pad = getComputedStyle(stage);
+  const w = stage.clientWidth - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight);
+  const h = stage.clientHeight - parseFloat(pad.paddingTop) - parseFloat(pad.paddingBottom);
   // A hidden tab or a layout that has not settled reports zero here. Scaling to
   // it would style the canvas to 0px and leave it invisible and untappable even
   // after the space arrives, so wait for a size instead.
@@ -174,7 +244,11 @@ canvas.onclick = (e) => {
 
   if (mode === "calibrate") {
     refs.push(xy);
-    if (refs.length === refsNeeded()) { mode = "select"; say("Scale set. Now tap holds in order."); }
+    if (refs.length === refsNeeded()) {
+      mode = "select";
+      say(calibrated() ? "Scale set. Now tap holds in the order you climb them."
+                       : "Points set. Fill in the real numbers beside them.");
+    }
     else say(`Reference point ${refs.length + 1} of ${refsNeeded()}.`);
   } else if (mode === "move" && moving !== null) {
     picks[moving] = { xy, hold: null };
@@ -211,13 +285,15 @@ $("#calibrate").onclick = () => {
   changed();
 };
 $("#undo-ref").onclick = () => { refs.pop(); mode = "calibrate"; changed(); };
-$("#method").onchange = () => {
+const methodChanged = () => {
   refs = [];
   reset();
   $("#grid-fields").hidden = refsNeeded() === 2;
   $("#reference-fields").hidden = refsNeeded() === 4;
+  $("#calibrate").textContent = refsNeeded() === 4 ? "Tap 4 bolt holes" : "Tap 2 points";
   changed();
 };
+for (const r of document.querySelectorAll('input[name="method"]')) r.onchange = methodChanged;
 for (const id of ["metres", "cols", "rows", "spacing"]) $("#" + id).oninput = changed;
 
 $("#file").onchange = async (e) => {
@@ -259,16 +335,22 @@ $("#file").onchange = async (e) => {
 
 async function detect() {
   const bar = $("#bar");
+  bar.hidden = false;
   try {
     if (!detector) {
-      bar.hidden = false;
+      bar.classList.remove("busy");
       detector = await loadDetector((seen, total) => {
         bar.firstElementChild.style.width = total ? `${(seen / total) * 100}%` : "";
+        $("#found").textContent = total
+          ? `Downloading the hold finder · ${(seen / 1e6).toFixed(0)} of ${(total / 1e6).toFixed(0)} MB · first time only`
+          : "Downloading the hold finder · first time only";
       });
     }
+    bar.classList.add("busy");
+    $("#found").textContent = "Finding holds…";
     holds = await detector.detect(photo);
     $("#found").textContent = `${holds.length} holds found on your ${detector.device === "webgpu" ? "GPU" : "CPU"}.`;
-    say(holds.length ? "Set the scale, then tap holds in order." : "No holds found. Place points by hand.");
+    say(holds.length ? "Next, set the scale from the bolt holes." : "No holds found. Place points by hand.");
   } catch (err) {
     // Detection is a convenience. Measuring by hand is the part that must work.
     holds = [];
@@ -277,6 +359,7 @@ async function detect() {
     console.warn("detector unavailable:", err);
   } finally {
     bar.hidden = true;
+    bar.classList.remove("busy");
   }
 }
 
@@ -286,10 +369,7 @@ $("#measure").onclick = async () => {
   say("Measuring…");
   update();
   const version = revision;
-  const calibration = refsNeeded() === 2
-    ? { method: "reference", points: refs, metres: number("#metres") }
-    : { method: "grid", corners: refs, cols: number("#cols"), rows: number("#rows"),
-        spacing_m: number("#spacing") };
+  const calibration = currentCalibration();
 
   try {
     const response = await fetch("/api/measure", {
@@ -313,7 +393,8 @@ $("#measure").onclick = async () => {
     gaps = result.gaps;
     draw();
     $("#out").hidden = false;
-    $("#total").textContent = `${result.total_m.toFixed(2)} m total · ${result.rise_m.toFixed(2)} m rise`;
+    $("#total-m").textContent = `${result.total_m.toFixed(2)} m`;
+    $("#rise-m").textContent = `${result.rise_m.toFixed(2)} m`;
     $("#basis").textContent = result.basis;
     $("#note").textContent = result.note;
     $("#warning").hidden = !result.warning;
@@ -321,7 +402,9 @@ $("#measure").onclick = async () => {
     last = result;
     tape = gaps.map(() => null);
     showGaps();
-    say("Done. Move a point or change the scale to measure again.");
+    update();
+    $("#out").scrollIntoView({ behavior: "smooth", block: "start" });
+    say("Done. Check a gap with a tape, or move a point to measure again.");
   } catch (err) {
     if (version === revision) {
       $("#error").textContent = err.message;
@@ -341,10 +424,12 @@ function showGaps() {
   list.replaceChildren();
   gaps.forEach((g, i) => {
     const li = document.createElement("li");
-    const row = document.createElement("div");
-    row.className = "gap";
-    const label = document.createElement("span");
-    label.textContent = `${g.from + 1} → ${g.to + 1}: ${g.metres.toFixed(2)} m`;
+    const pair = document.createElement("span");
+    pair.className = "pair";
+    pair.textContent = `${g.from + 1} → ${g.to + 1}`;
+    const metres = document.createElement("span");
+    metres.className = "metres";
+    metres.textContent = `${g.metres.toFixed(2)} m`;
     const input = document.createElement("input");
     input.type = "number";
     input.min = "0";
@@ -356,11 +441,10 @@ function showGaps() {
     err.className = "err";
     input.oninput = () => {
       const v = +input.value;
-      tape[i] = input.value !== "" && Number.isFinite(v) && v > 0 ? v * PER_UNIT[$("#tape-unit").value] : null;
+      tape[i] = input.value !== "" && Number.isFinite(v) && v > 0 ? v * PER_UNIT[unit()] : null;
       scoreGaps();
     };
-    row.append(label, input, err);
-    li.append(row);
+    li.append(pair, metres, input, err);
     list.append(li);
   });
   scoreGaps();
@@ -370,22 +454,29 @@ function scoreGaps() {
   const rows = [...$("#gaps").querySelectorAll(".err")];
   const errors = [];
   gaps.forEach((g, i) => {
-    if (tape[i] == null) { rows[i].textContent = ""; return; }
+    if (tape[i] == null) { rows[i].textContent = ""; rows[i].className = "err"; return; }
     const off = g.metres - tape[i];
     const pct = (off / tape[i]) * 100;
     errors.push(Math.abs(pct));
-    rows[i].textContent = `${off >= 0 ? "+" : "−"}${Math.abs(off * 100).toFixed(1)} cm (${pct >= 0 ? "+" : "−"}${Math.abs(pct).toFixed(1)}%)`;
-    rows[i].classList.toggle("bad", Math.abs(pct) > 10);
+    const sign = (v) => (v >= 0 ? "+" : "−");
+    rows[i].textContent = `${sign(off)}${Math.abs(off * 100).toFixed(1)} cm · ${sign(pct)}${Math.abs(pct).toFixed(1)}%`;
+    rows[i].className = `err ${Math.abs(pct) < 5 ? "good" : Math.abs(pct) < 10 ? "warn" : "bad"}`;
   });
   $("#tape-summary").textContent = errors.length
     ? `${errors.length} checked · mean error ${(errors.reduce((a, b) => a + b, 0) / errors.length).toFixed(1)}% · worst ${Math.max(...errors).toFixed(1)}%`
     : "";
 }
 
-$("#tape-unit").onchange = () => {
-  // Re-read every box in the new unit rather than converting what was typed.
-  [...$("#gaps").querySelectorAll("input")].forEach((input) => input.oninput());
-};
+// Re-read every box in the new unit rather than converting what was typed.
+for (const r of document.querySelectorAll('input[name="unit"]')) {
+  r.onchange = () => [...$("#gaps").querySelectorAll("input")].forEach((input) => input.oninput());
+}
+
+function currentCalibration() {
+  return method() === "grid"
+    ? { method: "grid", corners: refs, cols: number("#cols"), rows: number("#rows"), spacing_m: number("#spacing") }
+    : { method: "reference", points: refs, metres: number("#metres") };
+}
 
 $("#save").onclick = async () => {
   if (!last || !photo) return;
@@ -396,7 +487,7 @@ $("#save").onclick = async () => {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(jpeg);
   });
-  const unit = $("#tape-unit").value;
+  const units = unit();
   const round = (v) => Math.round(v * 10) / 10;
   const record = {
     app: "hold-distance",
@@ -406,14 +497,12 @@ $("#save").onclick = async () => {
     photo: { width: photo.width, height: photo.height, jpeg: photoData },
     detector: detector ? detector.device : null,
     holds: holds.map((h) => h.box.map(round)),
-    calibration: $("#method").value === "grid"
-      ? { method: "grid", corners: refs, cols: number("#cols"), rows: number("#rows"), spacing_m: number("#spacing") }
-      : { method: "reference", points: refs, metres: number("#metres") },
+    calibration: currentCalibration(),
     // Exactly what the API was sent, so the measurement can be rerun to the digit.
     points: picks.map((p) => ({ xy: p.xy, hold: p.hold })),
     result: last,
     tape: gaps.map((g, i) => ({ from: g.from, to: g.to, measured_m: g.metres,
-                                 tape_m: tape[i], unit })),
+                                 tape_m: tape[i], unit: units })),
   };
   const stamp = record.saved.slice(0, 16).replace(/[-:T]/g, "");
   const file = new File([JSON.stringify(record)], `hold-distance-${stamp}.json`,
