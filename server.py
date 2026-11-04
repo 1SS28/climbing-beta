@@ -121,8 +121,8 @@ async def beta(payload: BetaRequest):
     if any(i >= len(entry["polys"]) for i in payload.route):
         raise HTTPException(400, "Selected hold does not exist; select it again.")
     try:
-        holds, ids, off_wall, basis, note = holds_from_calibration(
-            payload.calibration, entry["polys"], entry["size"])
+        placed = holds_from_calibration(payload.calibration, entry["polys"], entry["size"])
+        holds, ids, off_wall, basis, note = placed[:5]
     except (ValueError, np.linalg.LinAlgError) as exc:
         raise HTTPException(400, str(exc))
 

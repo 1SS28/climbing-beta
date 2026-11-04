@@ -5,7 +5,7 @@ separate paths let the search run from an assumed wall height that a
 measurement would have rejected, which is how a scale putting holds across
 11.4 m of wall once reached the geometry unchallenged.
 """
-from typing import Annotated, Literal, NamedTuple
+from typing import Annotated, Callable, Literal, NamedTuple
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -83,13 +83,24 @@ def in_frame(points, size):
     return p
 
 
+class Mapping(NamedTuple):
+    """Both directions between the photo and the wall plane."""
+
+    to_metres: Callable
+    to_pixels: Callable
+    basis: str
+    note: str
+
+
 def wall_mapping(calibration, size):
-    """Validate a calibration and return (to_metres, basis, note).
+    """Validate a calibration and return the mapping it defines.
 
     to_metres maps image pixels onto the wall plane in metres with y running
     up, and raises ValueError for points the calibration cannot place. Callers
     that must not lose a point let that propagate; the hold filter catches it
-    and drops the hold instead.
+    and drops the hold instead. to_pixels goes back, which is how anything
+    computed on the wall, such as a climber's body, is drawn on the photo with
+    the same perspective as the holds it touches.
     """
     if isinstance(calibration, Reference):
         ref = in_frame(calibration.points, size)
@@ -98,7 +109,10 @@ def wall_mapping(calibration, size):
         def to_metres(points):
             return in_frame(points, size) * [scale, -scale]
 
-        return (to_metres,
+        def to_pixels(xy):
+            return np.atleast_2d(np.asarray(xy, dtype=float)) / [scale, -scale]
+
+        return Mapping(to_metres, to_pixels,
                 f"Known reference: {calibration.metres:g} m",
                 "Approximate: assumes a flat wall photographed straight on; "
                 "perspective is not corrected.")
@@ -133,7 +147,11 @@ def wall_mapping(calibration, size):
             raise ValueError("calibration could not produce finite distances")
         return xy
 
-    return (to_metres,
+    def to_pixels(xy):
+        q = np.c_[np.atleast_2d(np.asarray(xy, dtype=float)), np.ones(len(np.atleast_2d(xy)))] @ H.T
+        return q[:, :2] / q[:, 2:]
+
+    return Mapping(to_metres, to_pixels,
             f"Bolt grid: {calibration.cols} × {calibration.rows} gaps "
             f"at {calibration.spacing_m:g} m",
             "Perspective corrected. All reference points and route points must lie "
@@ -148,6 +166,7 @@ class Placed(NamedTuple):
     dropped: list
     basis: str
     note: str
+    to_pixels: Callable
 
 
 def holds_from_calibration(calibration, polys, size):
@@ -173,7 +192,8 @@ def holds_from_calibration(calibration, polys, size):
     wall, which projects to a sensible size in a sensible place. That needs the
     floor line or a learned on-wall test, and is still open.
     """
-    to_metres, basis, note = wall_mapping(calibration, size)
+    mapping = wall_mapping(calibration, size)
+    to_metres = mapping.to_metres
     frame = np.asarray(size, dtype=float)
     if isinstance(calibration, Grid):
         w = calibration.cols * calibration.spacing_m
@@ -207,7 +227,7 @@ def holds_from_calibration(calibration, polys, size):
         holds.append(Hold(x=x, y=y, z=0.0, size=span))
         ids.append(i)
 
-    return Placed(holds, ids, dropped, basis, note)
+    return Placed(holds, ids, dropped, mapping.basis, mapping.note, mapping.to_pixels)
 
 
 def measure_route(request, entry):
@@ -228,8 +248,9 @@ def measure_points(request: Span):
 
 
 def _report(calibration, pixels, size):
-    to_metres, basis, note = wall_mapping(calibration, size)
-    xy = to_metres(pixels)
+    mapping = wall_mapping(calibration, size)
+    basis, note = mapping.basis, mapping.note
+    xy = mapping.to_metres(pixels)
     distances = np.linalg.norm(np.diff(xy, axis=0), axis=1)
     rise = float(np.ptp(xy[:, 1]))
     return {

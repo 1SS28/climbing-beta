@@ -273,10 +273,12 @@ class DeployedApiTests(unittest.TestCase):
     def test_starts_without_the_page_beside_it(self):
         # Vercel serves public/ from its CDN and leaves it out of the function,
         # which is how the first deploy failed every call at import.
-        import shutil, subprocess, sys, tempfile
+        import glob, shutil, subprocess, sys, tempfile
         with tempfile.TemporaryDirectory() as tmp:
-            for f in ('app.py', 'measurement.py', 'calibrate.py', 'scene.py', 'wall.py'):
-                shutil.copy(f, tmp)
+            # What Vercel bundles: every module in the root, minus the tests.
+            for f in glob.glob('*.py'):
+                if not (f == 'tests.py' or f.startswith('test_')):
+                    shutil.copy(f, tmp)
             probe = ("from fastapi.testclient import TestClient; import app; "
                      "c = TestClient(app.app); print(c.get('/api/health').status_code)")
             run = subprocess.run([sys.executable, '-c', probe], cwd=tmp, capture_output=True, text=True)
@@ -364,3 +366,44 @@ class CheckTests(unittest.TestCase):
         _, _, v = check.score([('a', rec)])
         self.assertEqual(v['n'], 2)
         self.assertNotIn('factor', v)
+
+
+class DeployedBetaTests(unittest.TestCase):
+    """/api/beta on the deployed API: the route in, the search's moves and every frame out."""
+
+    def setUp(self):
+        import app
+        self.client = TestClient(app.app)
+        self.holds = [p.tolist() for p in ladder()]
+        self.body = {'size': list(FLAT_SIZE), 'calibration': FLAT, 'holds': self.holds,
+                     'route': list(range(10)), 'height_m': 1.68}
+
+    def post(self, **changes):
+        return self.client.post('/api/beta', json=dict(self.body, **changes))
+
+    def test_every_move_ends_on_its_hold_in_the_photo(self):
+        result = self.post().json()
+        self.assertTrue(result['ok'], result)
+        keys = [f for f in result['frames'] if f['key']]
+        self.assertEqual(len(keys), len(result['moves']) + 1)
+        centre = lambda i: np.mean(self.holds[i], axis=0)
+        for limb, hold in result['start'].items():
+            np.testing.assert_allclose(keys[0]['joints'][limb], centre(hold), atol=.05)
+        for move, f in zip(result['moves'], keys[1:]):
+            np.testing.assert_allclose(f['joints'][move['limb']], centre(move['to']), atol=.05)
+        self.assertEqual([f for f in result['frames'] if f['beyond']], [])
+
+    def test_still_refuses_to_invent_a_scale(self):
+        body = dict(self.body); body.pop('calibration')
+        self.assertEqual(self.client.post('/api/beta', json=body).status_code, 422)
+        self.assertEqual(self.post(wall_height_m=4.5).status_code, 422)
+
+    def test_a_route_it_cannot_climb_is_explained(self):
+        result = self.post(route=[0, 1, 9]).json()      # 2.8 m from hold 1 to hold 9
+        self.assertFalse(result['ok'])
+        self.assertIn('no path', result['reason'])
+
+    def test_validates_the_route(self):
+        self.assertEqual(self.post(route=[0, 1]).status_code, 422)
+        self.assertEqual(self.post(route=[0, 1, 99]).status_code, 400)
+        self.assertEqual(self.post(height_m=3).status_code, 422)

@@ -26,6 +26,15 @@ let detector = null;
 let last = null;           // the last measurement, as the API returned it
 let tape = [];             // what the climber's tape measure read, per gap, in metres
 let shown = null;          // the step last brought into view
+let climb = null;          // the beta the API found, with every frame of it
+let route = [];            // the hold ids the beta was asked for, in pick order
+let frame = 0;
+let playing = false;
+let timer = null;
+
+const LIMB_NAME = { LH: "Left hand", RH: "Right hand", LF: "Left foot", RF: "Right foot" };
+const CHAINS = { LH: ["shoulder_l", "elbow_l", "LH"], RH: ["shoulder_r", "elbow_r", "RH"],
+                 LF: ["hip_l", "knee_l", "ankle_l", "LF"], RF: ["hip_r", "knee_r", "ankle_r", "RF"] };
 
 const PER_UNIT = { in: 0.0254, cm: 0.01 };
 // Route, calibration and distance each get their own colour on the photo.
@@ -55,6 +64,9 @@ function update() {
   $("#undo").disabled = $("#clear").disabled = !live || !picks.length;
   $("#undo-ref").disabled = !live || !refs.length;
   $("#measure").disabled = !live || picks.length < 2 || !calibrated();
+  $("#beta-card").hidden = !last || picks.length < 3;
+  $("#beta").disabled = !live;
+  $("#beta-status").textContent = climb ? `${climb.moves.length} moves` : "";
   $("#select").setAttribute("aria-pressed", mode === "select");
   $("#manual").setAttribute("aria-pressed", mode === "manual");
   $("#cal-status").textContent = `${refs.length} of ${refsNeeded()}`;
@@ -114,6 +126,7 @@ function changed() {
   gaps = [];
   last = null;
   tape = [];
+  clearBeta();
   $("#out").hidden = true;
   $("#error").textContent = "";
   update();
@@ -176,7 +189,8 @@ function draw() {
     ctx.stroke();
   }
 
-  for (const g of gaps) stroke([picks[g.from].xy, picks[g.to].xy], COLOUR.gap, 2.5, k);
+  // The distances give way to the figure while it is showing.
+  if (!climb) for (const g of gaps) stroke([picks[g.from].xy, picks[g.to].xy], COLOUR.gap, 2.5, k);
 
   // Reference points as crosshairs: they are aimed at a bolt hole, not a hold.
   const names = refsNeeded() === 4 ? ["TL", "TR", "BL", "BR"] : ["A", "B"];
@@ -195,7 +209,7 @@ function draw() {
     pill(names[i], x, y - 28 * k, k, COLOUR.ref, "#1c0f33");
   });
 
-  for (const g of gaps) {
+  for (const g of climb ? [] : gaps) {
     const a = picks[g.from].xy, b = picks[g.to].xy;
     pill(`${g.metres.toFixed(2)} m`, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, k, COLOUR.gap, COLOUR.gapInk);
   }
@@ -214,6 +228,41 @@ function draw() {
     ctx.textBaseline = "middle";
     ctx.fillText(String(i + 1), x, y + 0.5 * k);
   });
+  if (climb) drawFigure(climb.frames[frame], k);
+}
+
+function drawFigure(f, k) {
+  const J = f.joints;
+  const tone = (limb) => (f.beyond.includes(limb) ? "#ff7a6b" : f.moving === limb ? COLOUR.gap : "#f3f6fa");
+  const torso = [J.shoulder_l, J.shoulder_r, J.hip_r, J.hip_l];
+  ctx.beginPath();
+  torso.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.closePath();
+  ctx.fillStyle = "rgba(183,148,255,.28)";
+  ctx.fill();
+  stroke([...torso, torso[0]], "#f3f6fa", 3, k);
+  const chest = [(J.shoulder_l[0] + J.shoulder_r[0]) / 2, (J.shoulder_l[1] + J.shoulder_r[1]) / 2];
+  stroke([chest, J.neck], "#f3f6fa", 4, k);
+  for (const [limb, chain] of Object.entries(CHAINS)) stroke(chain.map((n) => J[n]), tone(limb), 5, k);
+  ctx.beginPath();
+  ctx.arc(J.head[0], J.head[1], f.head_px, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(183,148,255,.35)";
+  ctx.fill();
+  ctx.lineWidth = 3 * k;
+  ctx.strokeStyle = COLOUR.shadow;
+  ctx.stroke();
+  ctx.lineWidth = 2 * k;
+  ctx.strokeStyle = "#f3f6fa";
+  ctx.stroke();
+  for (const limb of Object.keys(CHAINS)) {
+    ctx.beginPath();
+    ctx.arc(J[limb][0], J[limb][1], 6 * k, 0, Math.PI * 2);
+    ctx.fillStyle = tone(limb);
+    ctx.fill();
+    ctx.lineWidth = 2 * k;
+    ctx.strokeStyle = COLOUR.shadow;
+    ctx.stroke();
+  }
 }
 
 function fit() {
@@ -527,6 +576,134 @@ $("#save").onclick = async () => {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+/* The beta. The API runs the search and works out every frame; this only
+   plays them, so what is drawn is exactly what was computed. */
+function clearBeta() {
+  pause();
+  climb = null;
+  frame = 0;
+  $("#player").hidden = true;
+  $("#beta-error").textContent = "";
+}
+
+function betaRequest() {
+  const W = photo.width, H = photo.height;
+  const clip = (x, y) => [Math.min(W, Math.max(0, x)), Math.min(H, Math.max(0, y))];
+  const square = ([x, y], r) => [clip(x - r, y - r), clip(x + r, y - r), clip(x + r, y + r), clip(x - r, y + r)];
+  const polys = holds.map(({ box: [x1, y1, x2, y2] }) => [clip(x1, y1), clip(x2, y1), clip(x2, y2), clip(x1, y2)]);
+  // A point placed by hand has no outline, so give it a typical hold's.
+  const spans = holds.map((h) => h.span).sort((a, b) => a - b);
+  const half = (spans.length ? spans[spans.length >> 1] : 40) / 2;
+  const ids = picks.map((p) => (p.hold != null ? p.hold : polys.push(square(p.xy, half)) - 1));
+  return { ids, body: { size: [W, H], calibration: currentCalibration(), holds: polys, route: ids,
+                        height_m: number("#height") || 1.68 } };
+}
+
+const where = (id) => {
+  const at = route.indexOf(id);
+  return at >= 0 ? `hold ${at + 1}` : "a foothold";
+};
+
+function caption() {
+  const f = climb.frames[frame];
+  let text = f.move === 0 ? "Start: both hands and both feet on their first holds." : (() => {
+    const m = climb.moves[f.move - 1];
+    return `Move ${f.move} of ${climb.moves.length} · ${LIMB_NAME[m.limb]} to ${where(m.to)} · ${m.metres.toFixed(2)} m`;
+  })();
+  if (f.beyond.length) text += ` · ${f.beyond.map((l) => LIMB_NAME[l].toLowerCase()).join(" and ")} out of reach`;
+  $("#caption").textContent = text;
+  for (const b of $("#moves").querySelectorAll("button")) b.setAttribute("aria-current", +b.dataset.move === f.move);
+}
+
+function show(i) {
+  frame = Math.max(0, Math.min(climb.frames.length - 1, i));
+  $("#scrub").value = frame;
+  caption();
+  draw();
+}
+
+function pause() {
+  playing = false;
+  clearTimeout(timer);
+  $("#play").textContent = "Play";
+}
+
+function play() {
+  if (frame >= climb.frames.length - 1) show(0);
+  playing = true;
+  $("#play").textContent = "Pause";
+  const tick = () => {
+    if (!playing) return;
+    if (frame >= climb.frames.length - 1) return pause();
+    show(frame + 1);
+    // Hold each stance long enough to read before the next limb moves.
+    timer = setTimeout(tick, climb.frames[frame].key ? 550 : 45);
+  };
+  timer = setTimeout(tick, 300);
+}
+
+const keyframes = () => climb.frames.flatMap((f, i) => (f.key ? [i] : []));
+$("#play").onclick = () => (playing ? pause() : play());
+$("#prev").onclick = () => { pause(); show(keyframes().filter((i) => i < frame).pop() ?? 0); };
+$("#next").onclick = () => { pause(); show(keyframes().find((i) => i > frame) ?? climb.frames.length - 1); };
+$("#scrub").oninput = () => { pause(); show(+$("#scrub").value); };
+$("#height").oninput = () => { if (climb) clearBeta(); update(); draw(); };
+
+$("#beta").onclick = async () => {
+  clearBeta();
+  busy = true;
+  update();
+  say("Finding the beta…");
+  const version = revision;
+  const { ids, body } = betaRequest();
+  try {
+    const response = await fetch("/api/beta", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    let result;
+    try { result = await response.json(); }
+    catch { throw new Error("The server sent something unreadable. Try again."); }
+    if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "Check the scale and the route, then try again.");
+    if (version !== revision) return;
+    if (!result.ok) {
+      $("#beta-error").textContent = `No beta: ${result.reason}`;
+      say("No beta for this route. The reason is under Beta.");
+      return;
+    }
+    climb = result;
+    route = ids;
+    const list = $("#moves");
+    list.replaceChildren();
+    climb.moves.forEach((m, i) => {
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.dataset.move = i + 1;
+      b.textContent = `${i + 1}. ${LIMB_NAME[m.limb]} to ${where(m.to)} · ${m.metres.toFixed(2)} m`;
+      b.onclick = () => { pause(); show(climb.frames.findIndex((f) => f.move === i + 1 && f.key)); };
+      li.append(b);
+      list.append(li);
+    });
+    const skipped = climb.skipped.map((id) => route.indexOf(id) + 1).sort((a, b) => a - b);
+    const listed = skipped.length > 1 ? `holds ${skipped.slice(0, -1).join(", ")} and ${skipped.at(-1)}` : `hold ${skipped[0]}`;
+    const beyond = climb.frames.filter((f) => f.key && f.beyond.length).length;
+    $("#beta-note").textContent = [
+      skipped.length ? `The search did not need ${listed} for hands.` : "",
+      beyond ? `${beyond} stance${beyond > 1 ? "s ask" : " asks"} more reach than a body of this height has, shown in red.` : "",
+      "Feet can use any detected hold. This is the search's beta; it has not yet been checked against real climbs.",
+    ].filter(Boolean).join(" ");
+    $("#scrub").max = climb.frames.length - 1;
+    $("#player").hidden = false;
+    show(0);
+    $("#beta-card").scrollIntoView({ behavior: "smooth", block: "start" });
+    say(`Beta found: ${climb.moves.length} moves. Press Play.`);
+  } catch (err) {
+    if (version === revision) $("#beta-error").textContent = err.message;
+  } finally {
+    busy = false;
+    update();
+  }
 };
 
 update();

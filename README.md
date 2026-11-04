@@ -66,6 +66,7 @@ with a README there saying what each piece established and why it is not here.
 | `export_web.py` | export the weights to ONNX for the browser |
 | `app.py` | the deployed API: geometry only, no detector |
 | `check.py` | score tape-measure checks saved from the app |
+| `figure.py` | a body that holds the beta's stances, for the animation |
 | `public/` | the hosted app, detection included |
 | `wall.py` | homography, wall angle, and image to wall-plane metres |
 | `calibrate.py` | four bolt holes to a wall calibration, saved as JSON |
@@ -73,7 +74,7 @@ with a README there saying what each piece established and why it is not here.
 | `measurement.py` | validated calibrations, and what they place on the wall |
 | `beta.py` | stance graph and the search over it |
 | `server.py` | the measurement prototype |
-| `tests.py`, `test_measurement.py` | the checks |
+| `tests.py`, `test_measurement.py`, `test_figure.py` | the checks |
 
 ## Status
 
@@ -236,7 +237,7 @@ again after a server restart. Detection selects MPS, CUDA, or CPU automatically.
 The trained weights must exist at `runs/v1_960_best.pt`.
 
 Checks: `.venv/bin/python tests.py` and
-`.venv/bin/python -m unittest test_measurement` (API tests require `httpx`).
+`.venv/bin/python -m unittest test_measurement test_figure` (API tests require `httpx`).
 
 ## Hosted app
 
@@ -293,6 +294,37 @@ scatters. With three or more gaps it says which, and when it is the scale, what
 spacing would fit: 6 inches entered on an 8 inch wall comes back as a
 consistent x1.333 and names 8 in, while a grid miscounted by one comes back as
 a spacing no gym uses and says to recount.
+
+### Watching the beta
+
+After measuring, Find the beta runs the search on the server and plays it back
+as a figure climbing the photo: hands on the route, feet on any hold. The
+browser only plays frames; `figure.py` works out every one of them, so what is
+drawn is what was computed.
+
+The search decides where the hands and feet go, and nothing else, so the body
+around them is placed afterwards and is not allowed to change the answer.
+`test_figure.py` holds it to that. Every stance is held exactly; while one limb
+moves, the other three stay on their holds; bones keep their length in three
+dimensions to a tenth of a millimetre; the figure is drawn through the same
+calibration as the holds, so it has their perspective; and a stance no body of
+that height can hold is drawn stretched and red, never shortened onto a hold it
+does not reach. Each of those was checked by breaking the code on purpose and
+confirming the test fails.
+
+Two things the first version got wrong, both found by looking at it. A body
+built from the standard segment table spans 1.20 times height from sole to
+palm, short of what climbers reach, and half the frames of an easy ladder came
+out over-reaching; shoulders now lift and toes point, within limits, as real
+ones do. And bends were worked out flat in the wall plane, so a fifth of the
+limbs folded sharper than a right angle across the photo; elbows and knees now
+bend partly out of the wall, which brought that to 9%.
+
+What the overlay cannot vouch for is the beta itself. On a real wall it shows
+the search getting one hand to the top while the other never leaves its first
+hold, which is legal under the reach limits and nothing like how anyone
+climbs. The search stops when a hand reaches the finish, where most gyms want
+both. That, and the reach limits it runs on, are what the gym trip is for.
 
 Run the whole thing locally with one process:
 
