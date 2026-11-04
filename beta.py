@@ -183,7 +183,13 @@ def find_start(holds, c=Climber(), hands=None, feet=None):
 
 def search(holds, start, finish, c=Climber(), w=Costs(), hands=None, feet=None,
            max_expansions=200_000):
-    """Dijkstra over stances. Returns (path, cost) or (None, reason)."""
+    """Dijkstra over stances. Returns (path, cost) or (None, reason).
+
+    The climb ends with both hands on the finish hold, the match most gyms ask
+    for. Ending on the first hand to touch it let one hand do every move while
+    the other stayed on its starting hold, which the reach limits allow and no
+    climber does; the animation made that plain on the first real wall.
+    """
     if not feasible(start, holds, c):
         return None, "start stance is not physically reachable"
     hand_ok, foot_ok = eligible(holds, hands, feet)
@@ -202,7 +208,7 @@ def search(holds, start, finish, c=Climber(), w=Costs(), hands=None, feet=None,
             continue
         seen.add(s)
 
-        if s[0] == finish or s[1] == finish:  # a hand on the finish hold ends it
+        if s[0] == finish and s[1] == finish:
             path = [s]
             while path[-1] in prev:
                 path.append(prev[path[-1]])
@@ -229,7 +235,7 @@ def search(holds, start, finish, c=Climber(), w=Costs(), hands=None, feet=None,
                     prev[nxt] = s
                     heapq.heappush(queue, (nd, nxt))
 
-    return None, "no sequence reaches the finish hold. " + reach_gap(holds, start, finish, c, hand_ok)
+    return None, "no sequence gets both hands on the finish hold. " + reach_gap(holds, start, finish, c, hand_ok)
 
 
 def reach_gap(holds, start, finish, c, hand_ok=None):

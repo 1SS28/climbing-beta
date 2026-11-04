@@ -320,11 +320,23 @@ ones do. And bends were worked out flat in the wall plane, so a fifth of the
 limbs folded sharper than a right angle across the photo; elbows and knees now
 bend partly out of the wall, which brought that to 9%.
 
-What the overlay cannot vouch for is the beta itself. On a real wall it shows
-the search getting one hand to the top while the other never leaves its first
-hold, which is legal under the reach limits and nothing like how anyone
-climbs. The search stops when a hand reaches the finish, where most gyms want
-both. That, and the reach limits it runs on, are what the gym trip is for.
+The overlay's first finding was about the beta, not the drawing. On a real
+wall it showed one hand reaching the top while the other never left its first
+hold: legal under the reach limits, and nothing like how anyone climbs. The
+search stopped at the first hand on the finish. It now ends matched, with both
+hands on the finish hold as most gyms require, and on that wall both hands
+climb.
+
+Matching made the moves longer, and the longer moves exposed a jump: a body
+solved one frame at a time sat still through a reach, then snapped its hips up
+to 48 cm in a single frame. The body is now placed at each stance first and
+carried between them, with the largest step 3.5 cm. The ladder test had stayed
+smooth throughout, so the real wall's hold positions are in `test_data/` and
+checked as well.
+
+What the overlay still cannot vouch for is whether the beta is the one a
+climber would choose. That, and the reach limits it runs on, are what the gym
+trip is for.
 
 Run the whole thing locally with one process:
 

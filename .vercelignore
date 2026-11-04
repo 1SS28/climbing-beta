@@ -6,3 +6,4 @@ experiments
 static
 __pycache__
 *.pyc
+test_data

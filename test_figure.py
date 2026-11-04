@@ -3,6 +3,7 @@
 An overlay that looks right and is not is worse than none, so each property a
 viewer would take for granted is checked rather than assumed.
 """
+import json
 import unittest
 
 import numpy as np
@@ -86,6 +87,21 @@ class FigureTests(unittest.TestCase):
         self.assertLess(np.linalg.norm(np.diff(hips, axis=0), axis=1).max(), .1)
         for f in self.frames:   # upright enough that the head stays above the hips
             self.assertGreater(f["joints"]["head"][1], (f["joints"]["hip_l"][1] + f["joints"]["hip_r"][1]) / 2)
+
+    def test_a_real_wall_animates_without_jumping(self):
+        # The ladder stayed smooth through a change that made a real wall jump
+        # 21 cm in a frame, so the real wall is checked too.
+        from beta import route_chain
+        data = json.load(open("test_data/wall.json"))
+        holds = [Hold(x=x, y=y, size=size) for x, y, size in data["holds"]]
+        c = Climber(1.68)
+        chain, _ = route_chain(holds, data["route"], c)
+        path, _ = search(holds, find_start(holds, c, hands=chain), chain[-1], c=c, hands=chain)
+        self.assertEqual(path[-1][0], path[-1][1])                  # matched on the finish
+        wall = frames(path, holds, Body(1.68))
+        hips = np.array([(f["joints"]["hip_l"] + f["joints"]["hip_r"]) / 2 for f in wall])
+        self.assertLess(np.linalg.norm(np.diff(hips, axis=0), axis=1).max(), .06)
+        self.assertLessEqual(max(max(f["reach"].values()) for f in wall), BEYOND)
 
     def test_the_same_beta_always_animates_the_same_way(self):
         _, again = climb(self.holds)

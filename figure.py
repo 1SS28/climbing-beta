@@ -101,7 +101,7 @@ def trunk(params, body):
             "neck": chest + up * body.neck, "head": chest + up * (body.neck + body.head)}
 
 
-def _strain(params, contacts, body, previous):
+def _strain(params, contacts, body, previous, stiffness=4.0):
     t = trunk(params, body)
     e = 0.5 * params[2] ** 2
     for limb in LIMBS:
@@ -111,9 +111,9 @@ def _strain(params, contacts, body, previous):
         # toe point are used when they are needed rather than by default.
         e += 1e6 * max(0.0, d / (a + b + body.slack(limb)) - 1) ** 2 + (d / (a + b) - COMFORT) ** 2
     if previous is not None:
-        # Hold the body where it was, so it shifts with a move instead of jumping.
-        e += 4 * ((params[0] - previous[0]) ** 2 + (params[1] - previous[1]) ** 2) / body.height ** 2
-        e += (params[2] - previous[2]) ** 2
+        # Hold the body near where it is guided, so it shifts instead of jumping.
+        e += stiffness * ((params[0] - previous[0]) ** 2 + (params[1] - previous[1]) ** 2) / body.height ** 2
+        e += stiffness / 4 * (params[2] - previous[2]) ** 2
     return e
 
 
@@ -189,12 +189,12 @@ def limb(root, contact, a, b, slack, arm, choose):
     return root, bend(root, end, a, b, choose, TILT["arm" if arm else "leg"]), end, d / (full + slack)
 
 
-def pose(contacts, body, previous=None):
+def pose(contacts, body, previous=None, stiffness=4.0):
     """A body holding these four contacts. Returns (params, joints, reach, depth).
 
     depth is how far each elbow and knee sits off the wall; everything else is on it.
     """
-    f = lambda p: _strain(p, contacts, body, previous)
+    f = lambda p: _strain(p, contacts, body, previous, stiffness)
     step = np.array([0.1, 0.1, 0.3]) * [body.height, body.height, 1]
     if previous is None:
         hands = (contacts["LH"] + contacts["RH"]) / 2
@@ -235,20 +235,42 @@ def frames(path, holds, body, steps=STEPS):
     One limb moves per move, along the straight line between its two holds,
     eased in and out; the other three stay exactly on their holds. The last
     frame of each move is that move's stance exactly.
+
+    The body is placed at every stance first, then carried from one to the next
+    while the limb travels. Solving each frame only from the last let the hips
+    sit still through a reach until full stretch forced them to snap 30 cm in a
+    single frame; a climber shifts their hips during the move, not after it.
+    Between stances the body is held to that glide: held loosely, it swapped
+    mid-move to another comfortable position, 48 cm away in one frame on a real
+    wall. Holding it harder than this buys almost no smoothness and costs
+    posture, since a body on a straight line between two stances bends its
+    limbs more than one free to settle. A long move also gets more frames, so
+    nothing travels more than about 4 cm.
     """
     def contacts(stance):
         return {limb: np.asarray(holds[i].pos[:2], dtype=float) for limb, i in zip(LIMBS, stance)}
 
-    params, joints, reach, depth = pose(contacts(path[0]), body)
+    stances = []
+    params = None
+    for stance in path:
+        params = pose(contacts(stance), body, params)[0]
+        stances.append(params)
+
+    params, joints, reach, depth = pose(contacts(path[0]), body, stances[0])
     out = [{"move": 0, "moving": None, "key": True, "joints": joints, "reach": reach, "depth": depth}]
     for k, (a, b) in enumerate(zip(path, path[1:]), start=1):
         limb = next(i for i in range(4) if a[i] != b[i])
         start, end = np.asarray(holds[a[limb]].pos[:2]), np.asarray(holds[b[limb]].pos[:2])
-        for s in range(1, steps + 1):
+        travel = max(np.linalg.norm(end - start), np.linalg.norm(stances[k][:2] - stances[k - 1][:2]))
+        n = max(steps, int(np.ceil(1.5 * travel / 0.04)))      # 1.5: the eased curve's steepest point
+        for s in range(1, n + 1):
+            t = ease(s / n)
             c = contacts(a)
-            c[LIMBS[limb]] = end if s == steps else start + (end - start) * ease(s / steps)
-            params, joints, reach, depth = pose(c, body, params)
-            out.append({"move": k, "moving": LIMBS[limb], "key": s == steps,
+            c[LIMBS[limb]] = end if s == n else start + (end - start) * t
+            guide = stances[k - 1] + (stances[k] - stances[k - 1]) * t
+            # Firmly on the glide between stances; only reach should pull it off.
+            params, joints, reach, depth = pose(c, body, guide, stiffness=40.0)
+            out.append({"move": k, "moving": LIMBS[limb], "key": s == n,
                         "joints": joints, "reach": reach, "depth": depth})
     return out
 

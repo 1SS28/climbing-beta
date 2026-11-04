@@ -86,7 +86,9 @@ check("ladder is climbable", path is not None, str(info))
 if path:
     check("every step moves exactly one limb",
           all(sum(1 for k in range(4) if a[k] != b[k]) == 1 for a, b in zip(path, path[1:])))
-    check("finishes with a hand on the top hold", len(h) - 1 in (path[-1][0], path[-1][1]))
+    check("finishes matched, both hands on the top hold", path[-1][0] == path[-1][1] == len(h) - 1)
+    # The bug a one-hand finish allowed: a hand that never leaves its start.
+    check("both hands move", all(any(a[k] != b[k] for a, b in zip(path, path[1:])) for k in (0, 1)))
     check("cost is positive", info > 0)
 # A route whose top is out of reach must report, not truncate.
 severed = [Hold(x=0.4, y=0.3), Hold(x=0.5, y=0.9), Hold(x=0.45, y=1.5), Hold(x=0.5, y=4.5)]

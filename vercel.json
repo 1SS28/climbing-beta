@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "app.py": {
-      "excludeFiles": "{data/**,runs/**,experiments/**,out/**,static/**,.venv/**,tests.py,test_*.py}"
+      "excludeFiles": "{data/**,runs/**,experiments/**,out/**,static/**,.venv/**,test_data/**,tests.py,test_*.py}"
     }
   },
   "headers": [
