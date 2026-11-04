@@ -195,7 +195,22 @@ def search(holds, start, finish, c=Climber(), w=Costs(), hands=None, feet=None,
     hand_ok, foot_ok = eligible(holds, hands, feet)
     allowed = (hand_ok, hand_ok, foot_ok, foot_ok)  # LH, RH, LF, RF
 
+    # Each expansion asked the same questions of the same holds, and most of the
+    # search's time went on recomputing the answers. Each is now worked out the
+    # first time it is needed and kept: which holds a limb can step to from a
+    # hold, how far, whether a stance is feasible and what it costs. Same
+    # arithmetic in the same order, so the beta is identical to the digit.
     reach = c.step_max
+    pos = [h.pos for h in holds]
+    steps, ok, cost = {}, {}, {}
+
+    def options(limb, i):
+        key = (limb >= 2, i)
+        if key not in steps:
+            steps[key] = [(j, d) for j in allowed[limb] if j != i
+                          for d in (float(np.linalg.norm(pos[j] - pos[i])),) if d <= reach]
+        return steps[key]
+
     dist = {start: 0.0}
     prev = {}
     queue = [(0.0, start)]
@@ -219,17 +234,15 @@ def search(holds, start, finish, c=Climber(), w=Costs(), hands=None, feet=None,
             return None, f"gave up after {max_expansions} stances"
 
         for limb in range(4):
-            here = holds[s[limb]].pos
-            for j in allowed[limb]:
-                if j == s[limb]:
-                    continue
-                step = float(np.linalg.norm(holds[j].pos - here))
-                if step > reach:
-                    continue
+            for j, step in options(limb, s[limb]):
                 nxt = tuple(j if k == limb else s[k] for k in range(4))
-                if not feasible(nxt, holds, c):
+                if nxt not in ok:
+                    ok[nxt] = feasible(nxt, holds, c)
+                if not ok[nxt]:
                     continue
-                nd = d + w.travel * step + stance_cost(nxt, holds, c, w)
+                if nxt not in cost:
+                    cost[nxt] = stance_cost(nxt, holds, c, w)
+                nd = d + w.travel * step + cost[nxt]
                 if nd < dist.get(nxt, np.inf):
                     dist[nxt] = nd
                     prev[nxt] = s
