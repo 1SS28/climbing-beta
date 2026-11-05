@@ -67,6 +67,7 @@ with a README there saying what each piece established and why it is not here.
 | `app.py` | the deployed API: geometry only, no detector |
 | `check.py` | score tape-measure checks saved from the app |
 | `figure.py` | a body that holds the beta's stances, for the animation |
+| `video_check.py` | score any video of a beta against the transcript saved with it |
 | `public/` | the hosted app, detection included |
 | `wall.py` | homography, wall angle, and image to wall-plane metres |
 | `calibrate.py` | four bolt holes to a wall calibration, saved as JSON |
@@ -74,7 +75,7 @@ with a README there saying what each piece established and why it is not here.
 | `measurement.py` | validated calibrations, and what they place on the wall |
 | `beta.py` | stance graph and the search over it |
 | `server.py` | the measurement prototype |
-| `tests.py`, `test_measurement.py`, `test_figure.py` | the checks |
+| `tests.py`, `test_measurement.py`, `test_figure.py`, `test_video_check.py` | the checks |
 
 ## Status
 
@@ -339,6 +340,33 @@ file is the same frames at the same pace as the player: MP4 where the browser
 can write it, WebM in Firefox. Lines are drawn at a fixed scale for the
 recording rather than one that depends on the screen. Stopping playback
 partway throws the recording away.
+
+A transcript is saved with it. It has the moves in words, with the direction
+and length of each and when it happens in the video, a prompt built from them
+for a video model, and every frame's joints in video pixels with the time it
+was drawn. On a recorded beta the video's frames change a median 6 ms from the
+times the transcript gives.
+
+The prompt alone will not make a video model follow a beta. Text is loose
+about left and right, order and position, and those are the beta. The pose
+video is what carries the moves; the prompt describes the scene around them.
+To tell whether a generated video kept them:
+
+```bash
+.venv/bin/python video_check.py climbing-beta-*.json generated.mp4 --draw checked.mp4
+```
+
+It finds the climber in each frame with an Ultralytics pose model and reports
+how far each wrist and ankle is from where the beta put it, in centimetres on
+the wall, then goes stance by stance: whether the limb that moved landed within
+15 cm of its hold, how far the other three drifted while it moved, and how
+often left and right came out swapped. A video longer or shorter than the
+original is stretched to fit, and a smaller one scaled. `--draw` writes the
+video back with the beta in green and what was found in red.
+`test_video_check.py` feeds it videos with a known fault each (an offset, a
+hand that never arrives, a still foot that slides, left and right swapped, a
+climber who drops out of frame) and every one is caught; each was also checked
+by breaking the checker and watching a test fail.
 
 What the overlay still cannot vouch for is whether the beta is the one a
 climber would choose. That, and the reach limits it runs on, are what the gym
