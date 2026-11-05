@@ -177,6 +177,7 @@ label { display: block; font-size: 12px; font-weight: 550; color: var(--dim); ma
 #moves button { width: 100%; text-align: left; min-height: 36px; padding: 6px 10px; font-size: 13px;
                 font-weight: 550; border-radius: 8px; background: transparent; border-color: transparent;
                 color: var(--dim); font-variant-numeric: tabular-nums; }
+#video { width: 100%; }
 #moves button[aria-current=true] { background: #2b343f; color: var(--ink); }
 #beta-error { color: var(--bad); font-size: 14px; }
 #beta-error:empty { display: none; }
@@ -350,6 +351,10 @@ label { display: block; font-size: 12px; font-weight: 550; color: var(--dim); ma
       <p id="caption" aria-live="polite"></p>
       <ol id="moves"></ol>
       <p id="beta-note" class="dim"></p>
+      <div id="video-row">
+        <button id="video">Save as video</button>
+        <p class="dim">Plays the beta once and saves it as drawn here.</p>
+      </div>
     </div>
   </section>
 

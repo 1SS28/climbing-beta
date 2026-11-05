@@ -334,6 +334,12 @@ carried between them, with the largest step 3.5 cm. The ladder test had stayed
 smooth throughout, so the real wall's hold positions are in `test_data/` and
 checked as well.
 
+Save as video records the canvas while the beta plays through once, so the
+file is the same frames at the same pace as the player: MP4 where the browser
+can write it, WebM in Firefox. Lines are drawn at a fixed scale for the
+recording rather than one that depends on the screen. Stopping playback
+partway throws the recording away.
+
 What the overlay still cannot vouch for is whether the beta is the one a
 climber would choose. That, and the reach limits it runs on, are what the gym
 trip is for.

@@ -31,6 +31,8 @@ let route = [];            // the hold ids the beta was asked for, in pick order
 let frame = 0;
 let playing = false;
 let timer = null;
+let recording = null;      // the video being saved while the beta plays
+let pen = null;            // line scale while recording, so it does not follow the screen
 
 const LIMB_NAME = { LH: "Left hand", RH: "Right hand", LF: "Left foot", RF: "Right foot" };
 const CHAINS = { LH: ["shoulder_l", "elbow_l", "LH"], RH: ["shoulder_r", "elbow_r", "RH"],
@@ -40,6 +42,12 @@ const PER_UNIT = { in: 0.0254, cm: 0.01 };
 // Route, calibration and distance each get their own colour on the photo.
 const COLOUR = { route: "#3ddc97", routeInk: "#052417", ref: "#b794ff", gap: "#ffc65c",
                  gapInk: "#2a1d00", shadow: "rgba(8,11,15,.9)" };
+
+// What the browser can record a canvas as, best first. Most video tools take
+// MP4; Firefox only writes WebM.
+const VIDEO = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"];
+const videoType = () => (window.MediaRecorder && canvas.captureStream
+  ? VIDEO.find((t) => MediaRecorder.isTypeSupported(t)) : undefined);
 
 const checked = (name) => document.querySelector(`input[name="${name}"]:checked`).value;
 const method = () => checked("method");
@@ -58,14 +66,18 @@ function calibrated() {
 }
 
 function update() {
-  const live = !!photo && !busy;
+  const live = !!photo && !busy && !recording;
   for (const id of ["calibrate", "select", "manual"]) $("#" + id).disabled = !live;
-  $("#file").disabled = busy;
+  $("#file").disabled = busy || !!recording;
   $("#undo").disabled = $("#clear").disabled = !live || !picks.length;
   $("#undo-ref").disabled = !live || !refs.length;
   $("#measure").disabled = !live || picks.length < 2 || !calibrated();
   $("#beta-card").hidden = !last || picks.length < 3;
   $("#beta").disabled = !live;
+  for (const id of ["prev", "play", "next", "scrub", "height"]) $("#" + id).disabled = !!recording;
+  $("#video").disabled = !!recording;
+  $("#video").textContent = recording ? "Recording…" : "Save as video";
+  $("#video-row").hidden = !videoType();
   $("#beta-status").textContent = climb ? `${climb.moves.length} moves` : "";
   $("#select").setAttribute("aria-pressed", mode === "select");
   $("#manual").setAttribute("aria-pressed", mode === "manual");
@@ -171,7 +183,7 @@ function stroke(points, colour, width, k) {
 function draw() {
   if (!photo) return;
   ctx.drawImage(photo, 0, 0);
-  const k = 1 / view;
+  const k = pen ?? 1 / view;
   const chosen = new Set(picks.map((p) => p.hold));
 
   for (const h of holds) {
@@ -287,7 +299,7 @@ let down = null;
 canvas.onpointerdown = (e) => { down = [e.clientX, e.clientY]; };
 canvas.onpointercancel = () => { down = null; };
 canvas.onclick = (e) => {
-  if (!photo || busy || !down) return;
+  if (!photo || busy || recording || !down) return;
   if (Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 8) { down = null; return; }
   const r = canvas.getBoundingClientRect();
   // Without a laid-out canvas the arithmetic below is NaN, and NaN passes every
@@ -368,7 +380,9 @@ $("#file").onchange = async (e) => {
   try {
     const bitmap = await createImageBitmap(file);           // honours EXIF orientation
     const k = Math.min(1, WORK / Math.max(bitmap.width, bitmap.height));
-    const work = new OffscreenCanvas(Math.round(bitmap.width * k), Math.round(bitmap.height * k));
+    // Even sides, which the H.264 encoder behind a saved video needs.
+    const even = (v) => Math.max(2, Math.round(v * k / 2) * 2);
+    const work = new OffscreenCanvas(even(bitmap.width), even(bitmap.height));
     work.getContext("2d").drawImage(bitmap, 0, 0, work.width, work.height);
     bitmap.close();
     photo = work;
@@ -561,13 +575,17 @@ $("#save").onclick = async () => {
     tape: gaps.map((g, i) => ({ from: g.from, to: g.to, measured_m: g.metres,
                                  tape_m: tape[i], unit: units })),
   };
-  const stamp = record.saved.slice(0, 16).replace(/[-:T]/g, "");
-  const file = new File([JSON.stringify(record)], `hold-distance-${stamp}.json`,
-                        { type: "application/json" });
-  // On a phone the share sheet is the natural way to send it on; elsewhere,
-  // a plain download.
+  deliver(new File([JSON.stringify(record)], `hold-distance-${stamp(record.saved)}.json`,
+                   { type: "application/json" }), "Hold distance check");
+};
+
+const stamp = (iso = new Date().toISOString()) => iso.slice(0, 16).replace(/[-:T]/g, "");
+
+// On a phone the share sheet is the natural way to send a file on; elsewhere,
+// a plain download.
+async function deliver(file, title) {
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: "Hold distance check" }); return; }
+    try { await navigator.share({ files: [file], title }); return; }
     catch (err) { if (err.name === "AbortError") return; }
   }
   const url = URL.createObjectURL(file);
@@ -576,7 +594,7 @@ $("#save").onclick = async () => {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-};
+}
 
 /* The beta. The API runs the search and works out every frame; this only
    plays them, so what is drawn is exactly what was computed. */
@@ -628,6 +646,15 @@ function pause() {
   playing = false;
   clearTimeout(timer);
   $("#play").textContent = "Play";
+  if (recording && !recording.stopping) {
+    const { recorder, keep } = recording;
+    recording.stopping = true;
+    // Rest on the last frame for a second. It has to be redrawn throughout:
+    // with nothing new drawn the recorder ends the video on the last change.
+    let rest = keep ? 10 : 0;
+    const hold = () => (rest-- > 0 ? (draw(), setTimeout(hold, 100)) : recorder.stop());
+    hold();
+  }
 }
 
 function play() {
@@ -636,7 +663,10 @@ function play() {
   $("#play").textContent = "Pause";
   const tick = () => {
     if (!playing) return;
-    if (frame >= climb.frames.length - 1) return pause();
+    if (frame >= climb.frames.length - 1) {
+      if (recording) recording.keep = true;
+      return pause();
+    }
     show(frame + 1);
     // Hold each stance long enough to read before the next limb moves.
     timer = setTimeout(tick, climb.frames[frame].key ? 550 : 45);
@@ -649,6 +679,35 @@ $("#play").onclick = () => (playing ? pause() : play());
 $("#prev").onclick = () => { pause(); show(keyframes().filter((i) => i < frame).pop() ?? 0); };
 $("#next").onclick = () => { pause(); show(keyframes().find((i) => i > frame) ?? climb.frames.length - 1); };
 $("#scrub").oninput = () => { pause(); show(+$("#scrub").value); };
+/* The video is the canvas itself, recorded while the beta plays through once,
+   so it shows exactly the frames the player does at the same pace. */
+$("#video").onclick = () => {
+  const type = videoType();
+  if (!climb || !type || recording) return;
+  const recorder = new MediaRecorder(canvas.captureStream(30), { mimeType: type, videoBitsPerSecond: 8e6 });
+  const chunks = [];
+  const r = { recorder, keep: false, stopping: false };
+  recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  recorder.onstop = () => {
+    for (const t of recorder.stream.getTracks()) t.stop();
+    recording = pen = null;
+    update();
+    draw();
+    if (!r.keep) return say("Recording stopped.");
+    const ext = type.startsWith("video/mp4") ? "mp4" : "webm";
+    deliver(new File(chunks, `climbing-beta-${stamp()}.${ext}`, { type: type.split(";")[0] }), "Climbing beta");
+    say("Video saved.");
+  };
+  pause();
+  recording = r;
+  pen = Math.max(canvas.width, canvas.height) / 800;
+  update();
+  recorder.start();
+  say("Recording the beta…");
+  show(0);
+  play();
+};
+
 $("#height").oninput = () => { if (climb) clearBeta(); update(); draw(); };
 
 $("#beta").onclick = async () => {
