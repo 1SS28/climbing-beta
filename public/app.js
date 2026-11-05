@@ -575,25 +575,27 @@ $("#save").onclick = async () => {
     tape: gaps.map((g, i) => ({ from: g.from, to: g.to, measured_m: g.metres,
                                  tape_m: tape[i], unit: units })),
   };
-  deliver(new File([JSON.stringify(record)], `hold-distance-${stamp(record.saved)}.json`,
-                   { type: "application/json" }), "Hold distance check");
+  deliver([new File([JSON.stringify(record)], `hold-distance-${stamp(record.saved)}.json`,
+                    { type: "application/json" })], "Hold distance check");
 };
 
 const stamp = (iso = new Date().toISOString()) => iso.slice(0, 16).replace(/[-:T]/g, "");
 
-// On a phone the share sheet is the natural way to send a file on; elsewhere,
-// a plain download.
-async function deliver(file, title) {
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title }); return; }
+// On a phone the share sheet is the natural way to send files on; elsewhere,
+// a plain download of each.
+async function deliver(files, title) {
+  if (navigator.canShare && navigator.canShare({ files })) {
+    try { await navigator.share({ files, title }); return; }
     catch (err) { if (err.name === "AbortError") return; }
   }
-  const url = URL.createObjectURL(file);
-  const a = Object.assign(document.createElement("a"), { href: url, download: file.name });
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  for (const file of files) {
+    const url = URL.createObjectURL(file);
+    const a = Object.assign(document.createElement("a"), { href: url, download: file.name });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }
 
 /* The beta. The API runs the search and works out every frame; this only
@@ -640,6 +642,7 @@ function show(i) {
   $("#scrub").value = frame;
   caption();
   draw();
+  if (recording && !recording.stopping) recording.shown.push([performance.now() - recording.t0, frame]);
 }
 
 function pause() {
@@ -647,12 +650,16 @@ function pause() {
   clearTimeout(timer);
   $("#play").textContent = "Play";
   if (recording && !recording.stopping) {
-    const { recorder, keep } = recording;
-    recording.stopping = true;
+    const r = recording, { recorder, keep } = r;
+    r.stopping = true;
     // Rest on the last frame for a second. It has to be redrawn throughout:
     // with nothing new drawn the recorder ends the video on the last change.
     let rest = keep ? 10 : 0;
-    const hold = () => (rest-- > 0 ? (draw(), setTimeout(hold, 100)) : recorder.stop());
+    const hold = () => {
+      if (rest-- > 0) return draw(), setTimeout(hold, 100);
+      r.duration = (performance.now() - r.t0) / 1000;
+      recorder.stop();
+    };
     hold();
   }
 }
@@ -679,6 +686,52 @@ $("#play").onclick = () => (playing ? pause() : play());
 $("#prev").onclick = () => { pause(); show(keyframes().filter((i) => i < frame).pop() ?? 0); };
 $("#next").onclick = () => { pause(); show(keyframes().find((i) => i > frame) ?? climb.frames.length - 1); };
 $("#scrub").oninput = () => { pause(); show(+$("#scrub").value); };
+// Which way a limb goes on the photo. The climber faces the wall, so their
+// left is the photo's left.
+function heading(dx, up) {
+  const across = Math.abs(up) > 2 * Math.abs(dx) ? "" : dx < 0 ? "left" : "right";
+  const along = Math.abs(dx) > 2 * Math.abs(up) ? "" : up > 0 ? "up" : "down";
+  return [along, across].filter(Boolean).join(" and ");
+}
+
+/* The beta written out and timed against the video saved with it. The prompt
+   is for a video model to read; the frames are what video_check.py holds that
+   model's output to. */
+function transcript(r, video) {
+  const at = new Map();
+  for (const [t, i] of r.shown) if (!at.has(i)) at.set(i, +(t / 1000).toFixed(3));
+  const keys = keyframes();
+  const finish = route.at(-1);
+  const moves = climb.moves.map((m, k) => {
+    const a = climb.frames[keys[k]].joints[m.limb], b = climb.frames[keys[k + 1]].joints[m.limb];
+    const way = heading(b[0] - a[0], a[1] - b[1]);
+    const verb = m.limb.endsWith("H") ? "reaches" : "steps";
+    const first = climb.frames.findIndex((f) => f.move === k + 1);
+    return { n: k + 1, limb: m.limb, from: m.from, to: m.to, metres: m.metres,
+             start_s: at.get(first) ?? null, end_s: at.get(keys[k + 1]) ?? null,
+             text: `${LIMB_NAME[m.limb]} ${verb} ${way ? way + " " : ""}about ${Math.round(m.metres * 100)} cm` +
+                   (m.to === finish ? " to the finish hold" : "") };
+  });
+  const prompt = [
+    "One climber, seen from behind, on an indoor bouldering wall. Fixed camera, no cuts.",
+    "They start with both hands and both feet on holds, then move one hand or foot at a time:",
+    ...moves.map((m) => `${m.n}. ${m.text}.`),
+    "They finish with both hands together on the finish hold.",
+  ].join(" ");
+  return {
+    app: "climbing-beta", kind: "beta-transcript", version: 1, saved: new Date().toISOString(),
+    video: { file: video.name, type: video.type, width: canvas.width, height: canvas.height,
+             duration_s: +r.duration.toFixed(3) },
+    // Pixels below are in the video, which is this copy of the photo.
+    size: [photo.width, photo.height], calibration: currentCalibration(), basis: climb.basis,
+    height_m: number("#height") || 1.68,
+    route: picks.map((p, i) => ({ n: i + 1, hold: route[i], xy: p.xy })),
+    start: climb.start, prompt, moves,
+    frames: climb.frames.map((f, i) => ({ t: at.get(i) ?? null, move: f.move, key: f.key, moving: f.moving,
+                                          beyond: f.beyond, joints: f.joints })),
+  };
+}
+
 /* The video is the canvas itself, recorded while the beta plays through once,
    so it shows exactly the frames the player does at the same pace. */
 $("#video").onclick = () => {
@@ -686,7 +739,7 @@ $("#video").onclick = () => {
   if (!climb || !type || recording) return;
   const recorder = new MediaRecorder(canvas.captureStream(30), { mimeType: type, videoBitsPerSecond: 8e6 });
   const chunks = [];
-  const r = { recorder, keep: false, stopping: false };
+  const r = { recorder, keep: false, stopping: false, shown: [], t0: 0, duration: 0 };
   recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
   recorder.onstop = () => {
     for (const t of recorder.stream.getTracks()) t.stop();
@@ -694,15 +747,20 @@ $("#video").onclick = () => {
     update();
     draw();
     if (!r.keep) return say("Recording stopped.");
-    const ext = type.startsWith("video/mp4") ? "mp4" : "webm";
-    deliver(new File(chunks, `climbing-beta-${stamp()}.${ext}`, { type: type.split(";")[0] }), "Climbing beta");
-    say("Video saved.");
+    const name = `climbing-beta-${stamp()}`;
+    const video = new File(chunks, `${name}.${type.startsWith("video/mp4") ? "mp4" : "webm"}`,
+                           { type: type.split(";")[0] });
+    const text = new File([JSON.stringify(transcript(r, video), null, 1)], `${name}.json`,
+                          { type: "application/json" });
+    deliver([video, text], "Climbing beta");
+    say("Video and transcript saved.");
   };
   pause();
   recording = r;
   pen = Math.max(canvas.width, canvas.height) / 800;
   update();
   recorder.start();
+  r.t0 = performance.now();
   say("Recording the beta…");
   show(0);
   play();
