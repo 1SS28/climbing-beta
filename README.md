@@ -361,8 +361,16 @@ how far each wrist and ankle is from where the beta put it, in centimetres on
 the wall, then goes stance by stance: whether the limb that moved landed within
 15 cm of its hold, how far the other three drifted while it moved, and how
 often left and right came out swapped. A video longer or shorter than the
-original is stretched to fit, and a smaller one scaled. `--draw` writes the
-video back with the beta in green and what was found in red.
+original is stretched to fit. `--draw` writes the video back with the beta in
+green and what was found in red.
+
+Each frame is lined up with the photo, which the transcript carries, by
+matching the wall between them and fitting a homography, so the video only has
+to be shot from about the same spot. It is redone every second, for a phone
+held by hand. On the gym photo warped to a phone's 16:9 from a step to the
+side, and darkened, the route holds land within 0.15 px; a real video adds
+parallax from volumes, blur and people in the way, so the line-up count is in
+the report.
 It is for videos with a person in them. The pose model does not take the
 app's stick figure for one, so the app's own video comes back not seen
 throughout, rather than passing. On ClimbInst photos it does find climbers
@@ -371,6 +379,33 @@ on the wall from behind, with left and right the right way round.
 hand that never arrives, a still foot that slides, left and right swapped, a
 climber who drops out of frame) and every one is caught; each was also checked
 by breaking the checker and watching a test fail.
+
+#### Filming yourself climbing it
+
+A person does not climb at the beta's pace, so for a video of one:
+
+```bash
+.venv/bin/python video_check.py climbing-beta-*.json me.mp4 --own-pace --draw checked.mp4
+```
+
+This drops time altogether and keeps order. Every stance of the beta is given
+the moment of the video that fits it best, each later than the one before, and
+the whole set is chosen together, so a stance is matched where you held it,
+not where a limb passed by on the way somewhere else. A stance is reached when
+all four limbs are on its holds: hands within 15 cm at the wrist, feet within
+25 cm at the ankle, which sits further from the toe. For one not reached it
+says where each stray limb was instead, such as a foot 40 cm right of the
+beta's foothold. Of everyone in a frame, the climber is whoever looks most
+like a stance of the route, so people on the mats are passed over.
+
+The tests climb the beta at random paces with moves of up to three seconds,
+and then wrongly: a different foothold, two moves in the other order, two
+stances out of order, a quarter of the limbs lost by the pose model, someone
+standing on the mat throughout. Each is reported as it should be.
+
+To film one: save the beta as a video in the app first, since that writes the
+transcript; then film the climb on a tripod or held still, from where the
+photo was taken, with the whole route and your feet in frame.
 
 What the overlay still cannot vouch for is whether the beta is the one a
 climber would choose. That, and the reach limits it runs on, are what the gym
