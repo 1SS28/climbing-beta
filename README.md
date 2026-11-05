@@ -363,6 +363,10 @@ the wall, then goes stance by stance: whether the limb that moved landed within
 often left and right came out swapped. A video longer or shorter than the
 original is stretched to fit, and a smaller one scaled. `--draw` writes the
 video back with the beta in green and what was found in red.
+It is for videos with a person in them. The pose model does not take the
+app's stick figure for one, so the app's own video comes back not seen
+throughout, rather than passing. On ClimbInst photos it does find climbers
+on the wall from behind, with left and right the right way round.
 `test_video_check.py` feeds it videos with a known fault each (an offset, a
 hand that never arrives, a still foot that slides, left and right swapped, a
 climber who drops out of frame) and every one is caught; each was also checked
