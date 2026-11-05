@@ -549,15 +549,20 @@ function currentCalibration() {
     : { method: "reference", points: refs, metres: number("#metres") };
 }
 
-$("#save").onclick = async () => {
-  if (!last || !photo) return;
+// The working copy as a data URL, so a saved file carries the photo it measured.
+async function photoJpeg() {
   const jpeg = await photo.convertToBlob({ type: "image/jpeg", quality: 0.9 });
-  const photoData = await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(jpeg);
   });
+}
+
+$("#save").onclick = async () => {
+  if (!last || !photo) return;
+  const photoData = await photoJpeg();
   const units = unit();
   const round = (v) => Math.round(v * 10) / 10;
   const record = {
@@ -696,8 +701,9 @@ function heading(dx, up) {
 
 /* The beta written out and timed against the video saved with it. The prompt
    is for a video model to read; the frames are what video_check.py holds that
-   model's output to. */
-function transcript(r, video) {
+   model's output to. The photo comes too, so a video filmed from about the
+   same spot can be lined up with it. */
+function transcript(r, video, jpeg) {
   const at = new Map();
   for (const [t, i] of r.shown) if (!at.has(i)) at.set(i, +(t / 1000).toFixed(3));
   const keys = keyframes();
@@ -724,6 +730,7 @@ function transcript(r, video) {
              duration_s: +r.duration.toFixed(3) },
     // Pixels below are in the video, which is this copy of the photo.
     size: [photo.width, photo.height], calibration: currentCalibration(), basis: climb.basis,
+    photo: { jpeg },
     height_m: number("#height") || 1.68,
     route: picks.map((p, i) => ({ n: i + 1, hold: route[i], xy: p.xy })),
     start: climb.start, prompt, moves,
@@ -741,8 +748,10 @@ $("#video").onclick = () => {
   const chunks = [];
   const r = { recorder, keep: false, stopping: false, shown: [], t0: 0, duration: 0 };
   recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-  recorder.onstop = () => {
+  recorder.onstop = async () => {
     for (const t of recorder.stream.getTracks()) t.stop();
+    // Before the controls unlock, so the beta cannot change under it.
+    const jpeg = r.keep ? await photoJpeg() : null;
     recording = pen = null;
     update();
     draw();
@@ -750,7 +759,7 @@ $("#video").onclick = () => {
     const name = `climbing-beta-${stamp()}`;
     const video = new File(chunks, `${name}.${type.startsWith("video/mp4") ? "mp4" : "webm"}`,
                            { type: type.split(";")[0] });
-    const text = new File([JSON.stringify(transcript(r, video), null, 1)], `${name}.json`,
+    const text = new File([JSON.stringify(transcript(r, video, jpeg), null, 1)], `${name}.json`,
                           { type: "application/json" });
     deliver([video, text], "Climbing beta");
     say("Video and transcript saved.");
